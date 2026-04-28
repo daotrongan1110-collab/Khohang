@@ -134,18 +134,35 @@
   }
 
   /* TAB BAR (BOTTOM ON MOBILE) */
+  .tabs-wrap {
+    position: relative;
+    margin-top: 16px;
+  }
+  .tabs-wrap::after {
+    content: '';
+    position: absolute;
+    top: 0; right: 0;
+    width: 32px;
+    height: 100%;
+    background: linear-gradient(to right, transparent, rgba(245,241,234,0.95));
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .tabs-wrap.has-overflow::after {
+    opacity: 1;
+  }
   .tabs {
     display: flex;
     gap: 4px;
-    margin-top: 16px;
     overflow-x: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
+    scroll-behavior: smooth;
   }
   .tabs::-webkit-scrollbar { display: none; }
   .tab {
-    flex: 1;
-    min-width: max-content;
+    flex: 0 0 auto;
     padding: 10px 16px;
     font-size: 13px;
     font-weight: 500;
@@ -1209,11 +1226,13 @@ function render() {
             <span class="sync-status" id="sync-indicator"><span class="sync-dot"></span>Đang đồng bộ</span>
           </div>
         </div>
-        <nav class="tabs">
-          ${TABS.map(t => `
-            <button class="tab ${t.id===currentTab?'active':''}" data-tab="${t.id}">${t.label}</button>
-          `).join('')}
-        </nav>
+        <div class="tabs-wrap" id="tabs_wrap">
+          <nav class="tabs" id="tabs_nav">
+            ${TABS.map(t => `
+              <button class="tab ${t.id===currentTab?'active':''}" data-tab="${t.id}">${t.label}</button>
+            `).join('')}
+          </nav>
+        </div>
       </header>
       <main id="page"></main>
     </div>
@@ -1224,6 +1243,29 @@ function render() {
       render();
     });
   });
+
+  // Detect overflow để hiện gradient + scroll active tab vào view
+  const tabsNav = document.getElementById('tabs_nav');
+  const tabsWrap = document.getElementById('tabs_wrap');
+  if (tabsNav && tabsWrap) {
+    const checkOverflow = () => {
+      const hasOverflow = tabsNav.scrollWidth > tabsNav.clientWidth;
+      const isAtEnd = tabsNav.scrollLeft + tabsNav.clientWidth >= tabsNav.scrollWidth - 5;
+      tabsWrap.classList.toggle('has-overflow', hasOverflow && !isAtEnd);
+    };
+    checkOverflow();
+    tabsNav.addEventListener('scroll', checkOverflow);
+    window.addEventListener('resize', checkOverflow);
+
+    // Auto cuộn tab active vào giữa tầm nhìn
+    const activeTab = tabsNav.querySelector('.tab.active');
+    if (activeTab) {
+      const navRect = tabsNav.getBoundingClientRect();
+      const tabRect = activeTab.getBoundingClientRect();
+      const offsetCenter = tabRect.left - navRect.left - (navRect.width - tabRect.width) / 2;
+      tabsNav.scrollLeft += offsetCenter;
+    }
+  }
   renderPage();
 }
 
@@ -1531,8 +1573,9 @@ function renderProducts(page) {
                     ${low.length>0 ? `<span class="badge badge-warn">${low.length} size sắp hết</span>` : ''}
                   </div>
                 </div>
-                <div style="display:flex;gap:6px">
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
                   <button class="btn btn-ghost btn-sm" data-edit="${p.id}">Sửa</button>
+                  <button class="btn btn-ghost btn-sm" data-clone="${p.id}">Sao chép</button>
                   <button class="btn btn-danger btn-sm" data-del="${p.id}">Xoá</button>
                 </div>
               </div>
@@ -1570,6 +1613,9 @@ function renderProducts(page) {
   page.querySelector('#addProduct').addEventListener('click', () => openProductModal());
   page.querySelectorAll('[data-edit]').forEach(b => {
     b.addEventListener('click', () => openProductModal(b.dataset.edit));
+  });
+  page.querySelectorAll('[data-clone]').forEach(b => {
+    b.addEventListener('click', () => cloneProduct(b.dataset.clone));
   });
   page.querySelectorAll('[data-del]').forEach(b => {
     b.addEventListener('click', () => deleteProduct(b.dataset.del));
@@ -1775,6 +1821,24 @@ function bindProductForm(modal, p, editing) {
   });
 }
 
+function cloneProduct(id) {
+  const src = getProduct(id);
+  if (!src) return;
+  // Tạo bản sao với id mới, tên thêm "(Sao chép)" để user dễ sửa
+  const cloned = {
+    id: uid(),
+    name: src.name + ' (Sao chép)',
+    category: src.category,
+    sizes: src.sizes.map(s => ({ ...s })), // deep copy sizes
+    lowStockThreshold: src.lowStockThreshold
+  };
+  showModal({
+    title: 'Sao chép sản phẩm',
+    body: () => productFormHTML(cloned),
+    onMount: (modal) => bindProductForm(modal, cloned, false), // false = thêm mới
+  });
+}
+
 function deleteProduct(id) {
   const p = getProduct(id);
   if (!p) return;
@@ -1791,9 +1855,13 @@ function deleteProduct(id) {
 }
 
 /* ============================================================
-   PAGE: STOCK IN (NHẬP KHO)
+   PAGE: STOCK IN (NHẬP KHO) — đa dòng
    ============================================================ */
 let stockInPreselect = null;
+// Danh sách dòng đang chuẩn bị (chưa lưu)
+let stockInDraft = [];
+let stockInSharedDate = todayInputDate();
+let stockInSharedNote = '';
 
 function renderStockIn(page) {
   if (state.products.length === 0) {
@@ -1805,40 +1873,65 @@ function renderStockIn(page) {
 
   page.innerHTML = `
     <h2 class="page-title">Nhập kho</h2>
-    <p class="page-subtitle"><span class="accent-line"></span>Ghi nhận hàng nhập về</p>
+    <p class="page-subtitle"><span class="accent-line"></span>Có thể nhập nhiều sản phẩm/nhiều size cùng lúc</p>
 
     <div class="card section">
+      <div class="card-title"><span>Thông tin chung của lần nhập này</span></div>
       <div class="form-grid cols-2">
         <div class="field">
-          <label>Sản phẩm *</label>
+          <label>Ngày nhập</label>
+          <input type="date" class="input" id="in_date" value="${stockInSharedDate}">
+        </div>
+        <div class="field">
+          <label>Ghi chú chung (áp dụng cho tất cả dòng)</label>
+          <input class="input" id="in_note" value="${escapeHtml(stockInSharedNote)}" placeholder="VD: Nhập đợt tháng 5">
+        </div>
+      </div>
+    </div>
+
+    <div class="card section">
+      <div class="card-title"><span>Thêm dòng nhập</span></div>
+      <div class="form-grid cols-2">
+        <div class="field">
+          <label>Sản phẩm</label>
           <select class="select" id="in_product"></select>
         </div>
         <div class="field">
-          <label>Size *</label>
+          <label>Size</label>
           <select class="select" id="in_size"></select>
         </div>
         <div class="field">
-          <label>Số lượng *</label>
+          <label>Số lượng</label>
           <input type="number" min="1" class="input" id="in_qty" value="1">
         </div>
         <div class="field">
           <label>Giá nhập / sp</label>
           <input type="number" min="0" class="input" id="in_price">
         </div>
-        <div class="field">
-          <label>Ngày nhập</label>
-          <input type="date" class="input" id="in_date" value="${todayInputDate()}">
-        </div>
-        <div class="field">
-          <label>Ghi chú</label>
-          <input class="input" id="in_note" placeholder="Tuỳ chọn">
-        </div>
       </div>
       <div class="divider"></div>
-      <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap">
-        <div class="text-sm text-mute" id="in_summary">—</div>
-        <button class="btn btn-primary" id="in_save">＋ Ghi nhận nhập kho</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary" id="in_add_row">＋ Thêm vào danh sách</button>
+        <button class="btn btn-ghost btn-sm" id="in_add_all_sizes">＋ Thêm tất cả size của SP này</button>
       </div>
+    </div>
+
+    <div class="card section" id="draft_card">
+      <div class="card-title">
+        <span>Danh sách chuẩn bị nhập (${stockInDraft.length})</span>
+        ${stockInDraft.length > 0 ? `<button class="btn btn-ghost btn-sm" id="in_clear_all" style="color:var(--danger)">Xoá hết</button>` : ''}
+      </div>
+      ${renderStockDraftList(stockInDraft, 'in')}
+      ${stockInDraft.length > 0 ? `
+        <div class="divider"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div class="text-sm">
+            Tổng: <strong class="num">${stockInDraft.reduce((s,r)=>s+r.qty,0)}</strong> sản phẩm ·
+            Tổng tiền: <strong class="num">${fmtVND(stockInDraft.reduce((s,r)=>s+r.qty*r.unitPrice,0))}</strong>
+          </div>
+          <button class="btn btn-primary" id="in_save_all">✓ Lưu tất cả (${stockInDraft.length} dòng)</button>
+        </div>
+      ` : ''}
     </div>
 
     <div class="section card">
@@ -1851,7 +1944,6 @@ function renderStockIn(page) {
   const sizeSel = page.querySelector('#in_size');
   const priceEl = page.querySelector('#in_price');
   const qtyEl = page.querySelector('#in_qty');
-  const sumEl = page.querySelector('#in_summary');
 
   productSel.innerHTML = state.products.map(p =>
     `<option value="${p.id}" ${p.id===initial?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
@@ -1866,42 +1958,148 @@ function renderStockIn(page) {
     const p = getProduct(productSel.value);
     const sz = p.sizes.find(s => s.size === sizeSel.value);
     priceEl.value = sz ? sz.costPrice : 0;
-    refreshSummary();
-  }
-  function refreshSummary() {
-    const total = (+qtyEl.value || 0) * (+priceEl.value || 0);
-    sumEl.textContent = `Tổng tiền nhập: ${fmtVND(total)}`;
   }
 
   productSel.addEventListener('change', refillSizes);
   sizeSel.addEventListener('change', refillPrice);
-  qtyEl.addEventListener('input', refreshSummary);
-  priceEl.addEventListener('input', refreshSummary);
   refillSizes();
 
-  page.querySelector('#in_save').addEventListener('click', () => {
-    const tx = {
-      id: uid(), type: 'in',
+  // Lưu shared date/note vào biến global khi user gõ
+  page.querySelector('#in_date').addEventListener('input', e => stockInSharedDate = e.target.value);
+  page.querySelector('#in_note').addEventListener('input', e => stockInSharedNote = e.target.value);
+
+  // Thêm 1 dòng vào draft
+  page.querySelector('#in_add_row').addEventListener('click', () => {
+    const qty = +qtyEl.value;
+    if (!qty || qty <= 0) return showToast('Số lượng phải > 0', true);
+    stockInDraft.push({
+      tempId: uid(),
       productId: productSel.value,
       size: sizeSel.value,
-      qty: +qtyEl.value,
-      unitPrice: +priceEl.value,
-      date: page.querySelector('#in_date').value,
-      note: page.querySelector('#in_note').value
-    };
-    if (!tx.qty || tx.qty <= 0) return showToast('Số lượng > 0', true);
-    state.transactions.unshift(tx);
-    saveState();
-    showToast('Đã ghi nhận nhập kho');
-    render();
+      qty: qty,
+      unitPrice: +priceEl.value || 0
+    });
+    qtyEl.value = 1;
+    showToast('Đã thêm vào danh sách');
+    renderPage();
   });
+
+  // Thêm cùng lúc tất cả size của 1 sản phẩm
+  page.querySelector('#in_add_all_sizes').addEventListener('click', () => {
+    const p = getProduct(productSel.value);
+    const qty = +qtyEl.value;
+    if (!qty || qty <= 0) return showToast('Số lượng phải > 0', true);
+    p.sizes.forEach(sz => {
+      stockInDraft.push({
+        tempId: uid(),
+        productId: p.id,
+        size: sz.size,
+        qty: qty,
+        unitPrice: sz.costPrice || 0
+      });
+    });
+    showToast(`Đã thêm ${p.sizes.length} size của ${p.name}`);
+    renderPage();
+  });
+
+  // Xoá hết
+  const clearBtn = page.querySelector('#in_clear_all');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (!confirm('Xoá hết danh sách chuẩn bị?')) return;
+      stockInDraft = [];
+      renderPage();
+    });
+  }
+
+  // Xoá 1 dòng
+  page.querySelectorAll('[data-rm-draft]').forEach(b => {
+    b.addEventListener('click', () => {
+      stockInDraft = stockInDraft.filter(r => r.tempId !== b.dataset.rmDraft);
+      renderPage();
+    });
+  });
+
+  // Cập nhật qty/price từng dòng draft
+  page.querySelectorAll('[data-draft-qty]').forEach(el => {
+    el.addEventListener('input', e => {
+      const row = stockInDraft.find(r => r.tempId === e.target.dataset.draftQty);
+      if (row) row.qty = +e.target.value || 0;
+    });
+  });
+  page.querySelectorAll('[data-draft-price]').forEach(el => {
+    el.addEventListener('input', e => {
+      const row = stockInDraft.find(r => r.tempId === e.target.dataset.draftPrice);
+      if (row) row.unitPrice = +e.target.value || 0;
+    });
+  });
+
+  // Lưu tất cả
+  const saveAll = page.querySelector('#in_save_all');
+  if (saveAll) {
+    saveAll.addEventListener('click', () => {
+      const date = stockInSharedDate;
+      const note = stockInSharedNote;
+      const newTx = stockInDraft.map(r => ({
+        id: uid(),
+        type: 'in',
+        productId: r.productId,
+        size: r.size,
+        qty: r.qty,
+        unitPrice: r.unitPrice,
+        date: date,
+        note: note
+      })).filter(t => t.qty > 0);
+
+      if (newTx.length === 0) return showToast('Không có dòng hợp lệ', true);
+      state.transactions.unshift(...newTx);
+      saveState();
+      const count = newTx.length;
+      stockInDraft = [];
+      stockInSharedNote = ''; // reset note sau khi lưu
+      showToast(`Đã lưu ${count} dòng nhập`);
+      render();
+    });
+  }
 
   bindRecentTxActions(page);
 }
 
+// Render danh sách draft cho cả nhập và bán
+function renderStockDraftList(draft, type) {
+  if (draft.length === 0) {
+    return `<div class="empty" style="padding:16px 0"><div class="text-mute text-sm">Chưa có dòng nào trong danh sách</div></div>`;
+  }
+  return `
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${draft.map(r => {
+        const p = getProduct(r.productId);
+        const total = r.qty * r.unitPrice;
+        return `
+          <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:10px 12px;background:var(--bg-soft);border-radius:var(--radius-sm);border-left:3px solid var(${type==='in'?'--green':'--accent'})">
+            <div style="min-width:0">
+              <div style="font-weight:500;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p?p.name:'?')} <span class="text-mute">· ${escapeHtml(r.size)}</span></div>
+              <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+                <input type="number" min="1" class="input" data-draft-qty="${r.tempId}" value="${r.qty}" style="width:80px;padding:5px 8px;font-size:13px" title="Số lượng">
+                <input type="number" min="0" class="input num" data-draft-price="${r.tempId}" value="${r.unitPrice}" style="width:120px;padding:5px 8px;font-size:13px" title="Giá">
+                <span class="text-xs text-mute" style="align-self:center">= ${fmtVND(total)}</span>
+              </div>
+            </div>
+            <button class="btn btn-ghost btn-sm" data-rm-draft="${r.tempId}" style="color:var(--danger);font-size:18px">×</button>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
 /* ============================================================
-   PAGE: STOCK OUT (BÁN RA)
+   PAGE: STOCK OUT (BÁN RA) — đa dòng (giống đơn hàng)
    ============================================================ */
+let stockOutDraft = [];
+let stockOutSharedDate = todayInputDate();
+let stockOutSharedNote = '';
+
 function renderStockOut(page) {
   if (state.products.length === 0) {
     page.innerHTML = noProductsHTML('Bán ra');
@@ -1910,44 +2108,67 @@ function renderStockOut(page) {
 
   page.innerHTML = `
     <h2 class="page-title">Bán ra</h2>
-    <p class="page-subtitle"><span class="accent-line"></span>Ghi nhận hàng bán ra</p>
+    <p class="page-subtitle"><span class="accent-line"></span>Có thể bán nhiều sản phẩm/nhiều size cùng lúc (như 1 đơn hàng)</p>
 
     <div class="card section">
+      <div class="card-title"><span>Thông tin chung của đơn này</span></div>
       <div class="form-grid cols-2">
         <div class="field">
-          <label>Sản phẩm *</label>
+          <label>Ngày bán</label>
+          <input type="date" class="input" id="out_date" value="${stockOutSharedDate}">
+        </div>
+        <div class="field">
+          <label>Ghi chú chung (khách / kênh bán...)</label>
+          <input class="input" id="out_note" value="${escapeHtml(stockOutSharedNote)}" placeholder="VD: Đơn online #20, Khách Mai">
+        </div>
+      </div>
+    </div>
+
+    <div class="card section">
+      <div class="card-title"><span>Thêm sản phẩm vào đơn</span></div>
+      <div class="form-grid cols-2">
+        <div class="field">
+          <label>Sản phẩm</label>
           <select class="select" id="out_product"></select>
         </div>
         <div class="field">
-          <label>Size *</label>
+          <label>Size</label>
           <select class="select" id="out_size"></select>
         </div>
         <div class="field">
-          <label>Số lượng *</label>
+          <label>Số lượng</label>
           <input type="number" min="1" class="input" id="out_qty" value="1">
         </div>
         <div class="field">
           <label>Giá bán / sp</label>
           <input type="number" min="0" class="input" id="out_price">
         </div>
-        <div class="field">
-          <label>Ngày bán</label>
-          <input type="date" class="input" id="out_date" value="${todayInputDate()}">
-        </div>
-        <div class="field">
-          <label>Ghi chú</label>
-          <input class="input" id="out_note" placeholder="Khách / kênh bán...">
-        </div>
       </div>
+      <div class="text-xs text-mute" id="out_stock_hint" style="margin-top:6px"></div>
       <div class="divider"></div>
-      <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap">
-        <div class="text-sm" id="out_summary">—</div>
-        <button class="btn btn-primary" id="out_save">＋ Ghi nhận bán ra</button>
+      <button class="btn btn-secondary" id="out_add_row">＋ Thêm vào đơn</button>
+    </div>
+
+    <div class="card section">
+      <div class="card-title">
+        <span>Đơn đang chuẩn bị (${stockOutDraft.length})</span>
+        ${stockOutDraft.length > 0 ? `<button class="btn btn-ghost btn-sm" id="out_clear_all" style="color:var(--danger)">Xoá hết</button>` : ''}
       </div>
+      ${renderStockDraftList(stockOutDraft, 'out')}
+      ${stockOutDraft.length > 0 ? `
+        <div class="divider"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div class="text-sm">
+            Tổng: <strong class="num">${stockOutDraft.reduce((s,r)=>s+r.qty,0)}</strong> sản phẩm ·
+            Doanh thu: <strong class="num">${fmtVND(stockOutDraft.reduce((s,r)=>s+r.qty*r.unitPrice,0))}</strong>
+          </div>
+          <button class="btn btn-primary" id="out_save_all">✓ Lưu đơn (${stockOutDraft.length} dòng)</button>
+        </div>
+      ` : ''}
     </div>
 
     <div class="section card">
-      <div class="card-title"><span>5 lần bán gần nhất</span></div>
+      <div class="card-title"><span>5 đơn bán gần nhất</span></div>
       ${recentTransactionsHTML('out')}
     </div>
   `;
@@ -1956,7 +2177,7 @@ function renderStockOut(page) {
   const sizeSel = page.querySelector('#out_size');
   const priceEl = page.querySelector('#out_price');
   const qtyEl = page.querySelector('#out_qty');
-  const sumEl = page.querySelector('#out_summary');
+  const stockHint = page.querySelector('#out_stock_hint');
 
   productSel.innerHTML = state.products.map(p =>
     `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
@@ -1973,44 +2194,131 @@ function renderStockOut(page) {
     const p = getProduct(productSel.value);
     const sz = p.sizes.find(s => s.size === sizeSel.value);
     priceEl.value = sz ? sz.sellPrice : 0;
-    refreshSummary();
+    updateHint();
   }
-  function refreshSummary() {
-    const p = getProduct(productSel.value);
-    const stk = stockOf(p.id, sizeSel.value);
+  function updateHint() {
+    const stk = stockOf(productSel.value, sizeSel.value);
     const qty = +qtyEl.value || 0;
-    const total = qty * (+priceEl.value || 0);
-    let warn = '';
-    if (qty > stk) warn = ` <span style="color:var(--danger)">⚠ Vượt tồn (${stk})</span>`;
-    sumEl.innerHTML = `Tổng doanh thu: <strong class="num">${fmtVND(total)}</strong>${warn}`;
+    if (qty > stk) {
+      stockHint.innerHTML = `<span style="color:var(--danger)">⚠ Số lượng (${qty}) vượt tồn kho (${stk})</span>`;
+    } else {
+      stockHint.innerHTML = `<span class="text-mute">Tồn kho size này: ${stk}</span>`;
+    }
   }
 
   productSel.addEventListener('change', refillSizes);
   sizeSel.addEventListener('change', refillPrice);
-  qtyEl.addEventListener('input', refreshSummary);
-  priceEl.addEventListener('input', refreshSummary);
+  qtyEl.addEventListener('input', updateHint);
   refillSizes();
 
-  page.querySelector('#out_save').addEventListener('click', () => {
-    const tx = {
-      id: uid(), type: 'out',
+  page.querySelector('#out_date').addEventListener('input', e => stockOutSharedDate = e.target.value);
+  page.querySelector('#out_note').addEventListener('input', e => stockOutSharedNote = e.target.value);
+
+  // Thêm 1 dòng vào đơn
+  page.querySelector('#out_add_row').addEventListener('click', () => {
+    const qty = +qtyEl.value;
+    if (!qty || qty <= 0) return showToast('Số lượng phải > 0', true);
+
+    // Tính tổng sẽ bán cho size này (bao gồm cả những dòng đã có trong draft)
+    const alreadyInDraft = stockOutDraft
+      .filter(r => r.productId === productSel.value && r.size === sizeSel.value)
+      .reduce((s,r)=>s+r.qty, 0);
+    const stk = stockOf(productSel.value, sizeSel.value);
+    if (alreadyInDraft + qty > stk) {
+      if (!confirm(`Tổng số bán cho size này (${alreadyInDraft + qty}) vượt tồn kho (${stk}). Tiếp tục?`)) return;
+    }
+
+    stockOutDraft.push({
+      tempId: uid(),
       productId: productSel.value,
       size: sizeSel.value,
-      qty: +qtyEl.value,
-      unitPrice: +priceEl.value,
-      date: page.querySelector('#out_date').value,
-      note: page.querySelector('#out_note').value
-    };
-    if (!tx.qty || tx.qty <= 0) return showToast('Số lượng > 0', true);
-    const stk = stockOf(tx.productId, tx.size);
-    if (tx.qty > stk) {
-      if (!confirm(`Tồn kho hiện tại: ${stk}. Bán ${tx.qty} sẽ làm tồn kho âm. Tiếp tục?`)) return;
-    }
-    state.transactions.unshift(tx);
-    saveState();
-    showToast('Đã ghi nhận bán ra');
-    render();
+      qty: qty,
+      unitPrice: +priceEl.value || 0
+    });
+    qtyEl.value = 1;
+    showToast('Đã thêm vào đơn');
+    renderPage();
   });
+
+  // Xoá hết đơn
+  const clearBtn = page.querySelector('#out_clear_all');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (!confirm('Xoá hết đơn đang chuẩn bị?')) return;
+      stockOutDraft = [];
+      renderPage();
+    });
+  }
+
+  // Xoá 1 dòng
+  page.querySelectorAll('[data-rm-draft]').forEach(b => {
+    b.addEventListener('click', () => {
+      stockOutDraft = stockOutDraft.filter(r => r.tempId !== b.dataset.rmDraft);
+      renderPage();
+    });
+  });
+
+  // Cập nhật qty/price từng dòng
+  page.querySelectorAll('[data-draft-qty]').forEach(el => {
+    el.addEventListener('input', e => {
+      const row = stockOutDraft.find(r => r.tempId === e.target.dataset.draftQty);
+      if (row) row.qty = +e.target.value || 0;
+    });
+  });
+  page.querySelectorAll('[data-draft-price]').forEach(el => {
+    el.addEventListener('input', e => {
+      const row = stockOutDraft.find(r => r.tempId === e.target.dataset.draftPrice);
+      if (row) row.unitPrice = +e.target.value || 0;
+    });
+  });
+
+  // Lưu cả đơn
+  const saveAll = page.querySelector('#out_save_all');
+  if (saveAll) {
+    saveAll.addEventListener('click', () => {
+      const date = stockOutSharedDate;
+      const note = stockOutSharedNote;
+      const newTx = stockOutDraft.map(r => ({
+        id: uid(),
+        type: 'out',
+        productId: r.productId,
+        size: r.size,
+        qty: r.qty,
+        unitPrice: r.unitPrice,
+        date: date,
+        note: note
+      })).filter(t => t.qty > 0);
+
+      if (newTx.length === 0) return showToast('Không có dòng hợp lệ', true);
+
+      // Cảnh báo tổng tồn kho 1 lần cuối
+      let warnings = [];
+      const grouped = {};
+      newTx.forEach(t => {
+        const k = t.productId + '|' + t.size;
+        grouped[k] = (grouped[k] || 0) + t.qty;
+      });
+      Object.entries(grouped).forEach(([k, qty]) => {
+        const [pid, sz] = k.split('|');
+        const stk = stockOf(pid, sz);
+        if (qty > stk) {
+          const p = getProduct(pid);
+          warnings.push(`${p.name} size ${sz}: bán ${qty}, tồn chỉ ${stk}`);
+        }
+      });
+      if (warnings.length > 0) {
+        if (!confirm('Cảnh báo vượt tồn kho:\n\n' + warnings.join('\n') + '\n\nTiếp tục?')) return;
+      }
+
+      state.transactions.unshift(...newTx);
+      saveState();
+      const count = newTx.length;
+      stockOutDraft = [];
+      stockOutSharedNote = '';
+      showToast(`Đã lưu đơn ${count} dòng`);
+      render();
+    });
+  }
 
   bindRecentTxActions(page);
 }
@@ -2237,9 +2545,10 @@ function openEditCostModal(costId) {
 }
 
 /* ============================================================
-   PAGE: COSTS (CHI PHÍ)
+   PAGE: COSTS (CHI PHÍ) — đa dòng
    ============================================================ */
 let costForm = { category: 'production', amount: 0, date: todayInputDate(), note: '' };
+let costDraft = [];
 
 function renderCosts(page) {
   const totalsByCat = COST_CATEGORIES.map(c => ({
@@ -2249,10 +2558,10 @@ function renderCosts(page) {
 
   page.innerHTML = `
     <h2 class="page-title">Chi phí</h2>
-    <p class="page-subtitle"><span class="accent-line"></span>Quản lý chi phí ngoài giá vốn hàng nhập</p>
+    <p class="page-subtitle"><span class="accent-line"></span>Có thể thêm nhiều chi phí cùng lúc</p>
 
     <div class="card section">
-      <div class="card-title"><span>Thêm chi phí</span></div>
+      <div class="card-title"><span>Thêm dòng chi phí</span></div>
       <div class="cat-select" id="cat_select">
         ${COST_CATEGORIES.map(c => `
           <button class="cat-pill ${c.key===costForm.category?'active':''}" data-cat="${c.key}">${c.label}</button>
@@ -2260,7 +2569,7 @@ function renderCosts(page) {
       </div>
       <div class="form-grid cols-2">
         <div class="field">
-          <label>Số tiền *</label>
+          <label>Số tiền</label>
           <input type="number" min="0" class="input" id="c_amount" value="${costForm.amount||''}" placeholder="0">
         </div>
         <div class="field">
@@ -2273,7 +2582,37 @@ function renderCosts(page) {
         </div>
       </div>
       <div class="divider"></div>
-      <button class="btn btn-primary btn-block" id="c_save">＋ Thêm chi phí</button>
+      <button class="btn btn-secondary btn-block" id="c_add_row">＋ Thêm vào danh sách</button>
+    </div>
+
+    <div class="card section">
+      <div class="card-title">
+        <span>Danh sách chuẩn bị (${costDraft.length})</span>
+        ${costDraft.length > 0 ? `<button class="btn btn-ghost btn-sm" id="c_clear_all" style="color:var(--danger)">Xoá hết</button>` : ''}
+      </div>
+      ${costDraft.length === 0 ? `
+        <div class="empty" style="padding:16px 0"><div class="text-mute text-sm">Chưa có dòng nào trong danh sách</div></div>
+      ` : `
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${costDraft.map(c => `
+            <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:10px 12px;background:var(--bg-soft);border-radius:var(--radius-sm);border-left:3px solid var(--warn)">
+              <div style="min-width:0">
+                <div style="font-weight:500;font-size:14px"><span class="chip">${escapeHtml(costLabel(c.category))}</span> · ${fmtDate(c.date)}</div>
+                <div class="text-xs text-mute" style="margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.note||'(Không ghi chú)')}</div>
+                <div class="num type-cost" style="font-weight:600;margin-top:2px">${fmtVND(c.amount)}</div>
+              </div>
+              <button class="btn btn-ghost btn-sm" data-rm-cost-draft="${c.tempId}" style="color:var(--danger);font-size:18px">×</button>
+            </div>
+          `).join('')}
+        </div>
+        <div class="divider"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div class="text-sm">
+            Tổng: <strong class="num type-cost">${fmtVND(costDraft.reduce((s,c)=>s+c.amount,0))}</strong>
+          </div>
+          <button class="btn btn-primary" id="c_save_all">✓ Lưu tất cả (${costDraft.length} dòng)</button>
+        </div>
+      `}
     </div>
 
     <div class="section">
@@ -2336,14 +2675,59 @@ function renderCosts(page) {
   page.querySelector('#c_date').addEventListener('input', e => costForm.date = e.target.value);
   page.querySelector('#c_note').addEventListener('input', e => costForm.note = e.target.value);
 
-  page.querySelector('#c_save').addEventListener('click', () => {
+  // Thêm vào danh sách
+  page.querySelector('#c_add_row').addEventListener('click', () => {
     if (!costForm.amount || costForm.amount <= 0) return showToast('Nhập số tiền', true);
-    state.costs.unshift({ id: uid(), ...costForm });
-    saveState();
-    showToast('Đã thêm chi phí');
-    costForm = { category: costForm.category, amount: 0, date: todayInputDate(), note: '' };
-    render();
+    costDraft.push({
+      tempId: uid(),
+      category: costForm.category,
+      amount: costForm.amount,
+      date: costForm.date,
+      note: costForm.note
+    });
+    showToast('Đã thêm vào danh sách');
+    // Reset form trừ category và date (giữ lại để nhập tiếp dễ)
+    costForm = { category: costForm.category, amount: 0, date: costForm.date, note: '' };
+    renderPage();
   });
+
+  // Xoá hết draft
+  const clearBtn = page.querySelector('#c_clear_all');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (!confirm('Xoá hết danh sách?')) return;
+      costDraft = [];
+      renderPage();
+    });
+  }
+
+  // Xoá 1 draft
+  page.querySelectorAll('[data-rm-cost-draft]').forEach(b => {
+    b.addEventListener('click', () => {
+      costDraft = costDraft.filter(c => c.tempId !== b.dataset.rmCostDraft);
+      renderPage();
+    });
+  });
+
+  // Lưu tất cả
+  const saveAll = page.querySelector('#c_save_all');
+  if (saveAll) {
+    saveAll.addEventListener('click', () => {
+      const newCosts = costDraft.map(d => ({
+        id: uid(),
+        category: d.category,
+        amount: d.amount,
+        date: d.date,
+        note: d.note
+      }));
+      state.costs.unshift(...newCosts);
+      saveState();
+      const count = newCosts.length;
+      costDraft = [];
+      showToast(`Đã lưu ${count} chi phí`);
+      render();
+    });
+  }
 
   page.querySelectorAll('[data-rm-cost]').forEach(b => {
     b.addEventListener('click', () => {
