@@ -1071,6 +1071,76 @@ function setSyncStatus(s) {
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 /* ============================================================
+   SOFT DELETE HELPERS
+   ============================================================ */
+// Trả về items chưa bị xoá (deleted không truthy)
+function activeProducts() { return state.products.filter(p => !p.deleted); }
+function activeTransactions() { return state.transactions.filter(t => !t.deleted); }
+function activeCosts() { return state.costs.filter(c => !c.deleted); }
+
+// Đánh dấu xoá thay vì xoá thật
+function softDeleteProduct(id) {
+  const p = state.products.find(x => x.id === id);
+  if (p) {
+    p.deleted = true;
+    p.deletedAt = Date.now();
+    // Cũng đánh dấu xoá các giao dịch liên quan
+    state.transactions.forEach(t => {
+      if (t.productId === id && !t.deleted) {
+        t.deleted = true;
+        t.deletedAt = Date.now();
+        t.deletedByProduct = true; // để khi phục hồi SP biết phục hồi luôn các giao dịch này
+      }
+    });
+  }
+}
+function softDeleteTransaction(id) {
+  const t = state.transactions.find(x => x.id === id);
+  if (t) { t.deleted = true; t.deletedAt = Date.now(); }
+}
+function softDeleteCost(id) {
+  const c = state.costs.find(x => x.id === id);
+  if (c) { c.deleted = true; c.deletedAt = Date.now(); }
+}
+
+// Phục hồi
+function restoreProduct(id) {
+  const p = state.products.find(x => x.id === id);
+  if (p) {
+    delete p.deleted;
+    delete p.deletedAt;
+    // Phục hồi luôn các giao dịch bị xoá theo SP
+    state.transactions.forEach(t => {
+      if (t.productId === id && t.deletedByProduct) {
+        delete t.deleted;
+        delete t.deletedAt;
+        delete t.deletedByProduct;
+      }
+    });
+  }
+}
+function restoreTransaction(id) {
+  const t = state.transactions.find(x => x.id === id);
+  if (t) {
+    delete t.deleted;
+    delete t.deletedAt;
+    delete t.deletedByProduct;
+  }
+}
+function restoreCost(id) {
+  const c = state.costs.find(x => x.id === id);
+  if (c) { delete c.deleted; delete c.deletedAt; }
+}
+
+// Xoá vĩnh viễn (từ thùng rác)
+function purgeProduct(id) {
+  state.products = state.products.filter(x => x.id !== id);
+  state.transactions = state.transactions.filter(t => t.productId !== id);
+}
+function purgeTransaction(id) { state.transactions = state.transactions.filter(t => t.id !== id); }
+function purgeCost(id) { state.costs = state.costs.filter(c => c.id !== id); }
+
+/* ============================================================
    UTILS
    ============================================================ */
 const fmtVND = (n) => {
@@ -1102,7 +1172,7 @@ function getProduct(id) { return state.products.find(p => p.id === id); }
 
 function stockOf(productId, size) {
   let n = 0;
-  for (const t of state.transactions) {
+  for (const t of activeTransactions()) {
     if (t.productId !== productId || t.size !== size) continue;
     n += t.type === 'in' ? Number(t.qty) : -Number(t.qty);
   }
@@ -1115,7 +1185,7 @@ function totalStockOfProduct(p) {
 
 function totalInOfProduct(productId, { from, to } = {}) {
   let n = 0;
-  for (const t of state.transactions) {
+  for (const t of activeTransactions()) {
     if (t.productId !== productId || t.type !== 'in') continue;
     if (from && t.date < from) continue;
     if (to && t.date > to) continue;
@@ -1126,7 +1196,7 @@ function totalInOfProduct(productId, { from, to } = {}) {
 
 function totalOutOfProduct(productId, { from, to } = {}) {
   let n = 0;
-  for (const t of state.transactions) {
+  for (const t of activeTransactions()) {
     if (t.productId !== productId || t.type !== 'out') continue;
     if (from && t.date < from) continue;
     if (to && t.date > to) continue;
@@ -1136,9 +1206,8 @@ function totalOutOfProduct(productId, { from, to } = {}) {
 }
 
 function outBySizeOfProduct(productId, { from, to } = {}) {
-  // Trả về { sizeName: qty, ... }
   const map = {};
-  for (const t of state.transactions) {
+  for (const t of activeTransactions()) {
     if (t.productId !== productId || t.type !== 'out') continue;
     if (from && t.date < from) continue;
     if (to && t.date > to) continue;
@@ -1156,7 +1225,7 @@ function lowStockSizes(p) {
 
 function summary({ from, to, productFilter } = {}) {
   let totalIn = 0, totalOut = 0, revenue = 0, productCost = 0, otherCost = 0;
-  for (const t of state.transactions) {
+  for (const t of activeTransactions()) {
     if (productFilter && t.productId !== productFilter) continue;
     if (from && t.date < from) continue;
     if (to && t.date > to) continue;
@@ -1168,24 +1237,20 @@ function summary({ from, to, productFilter } = {}) {
       revenue += Number(t.qty) * Number(t.unitPrice || 0);
     }
   }
-  // Chi phí: KHÔNG lọc theo product (vì chi phí không gắn với sp cụ thể)
-  // Chỉ lọc theo product nếu KHÔNG có productFilter, ngược lại bỏ qua
   if (!productFilter) {
-    for (const c of state.costs) {
+    for (const c of activeCosts()) {
       if (from && c.date < from) continue;
       if (to && c.date > to) continue;
       otherCost += Number(c.amount);
     }
   }
 
-  // Tồn kho LUÔN là hiện tại (không phụ thuộc from/to vì stock = tổng nhập - tổng bán tích luỹ)
-  // Nhưng có thể lọc theo product
   let stockRemaining;
   if (productFilter) {
     const p = state.products.find(x => x.id === productFilter);
-    stockRemaining = p ? totalStockOfProduct(p) : 0;
+    stockRemaining = p && !p.deleted ? totalStockOfProduct(p) : 0;
   } else {
-    stockRemaining = state.products.reduce((s,p)=> s + totalStockOfProduct(p), 0);
+    stockRemaining = activeProducts().reduce((s,p)=> s + totalStockOfProduct(p), 0);
   }
 
   return {
@@ -1304,7 +1369,7 @@ let overviewFilter = { from: '', to: '', productId: '' };
 const SIZE_COLORS = ['#c84630','#b8923f','#4a6b3e','#2d5b8a','#7a4e8c','#a85a3c','#5c7a8a','#8a6e3c'];
 
 function renderSizeBreakdownHTML() {
-  const filtered = state.products.filter(p =>
+  const filtered = activeProducts().filter(p =>
     !overviewFilter.productId || p.id === overviewFilter.productId);
 
   if (filtered.length === 0) {
@@ -1372,7 +1437,7 @@ function renderOverview(page) {
     productFilter: overviewFilter.productId || undefined
   });
 
-  const lowStockProducts = state.products
+  const lowStockProducts = activeProducts()
     .map(p => ({ p, low: lowStockSizes(p) }))
     .filter(x => x.low.length > 0);
 
@@ -1399,7 +1464,7 @@ function renderOverview(page) {
         <label>Sản phẩm</label>
         <select class="select" id="filterProduct">
           <option value="">— Tất cả —</option>
-          ${state.products.map(p => `
+          ${activeProducts().map(p => `
             <option value="${p.id}" ${overviewFilter.productId===p.id?'selected':''}>${escapeHtml(p.name)}</option>
           `).join('')}
         </select>
@@ -1420,7 +1485,7 @@ function renderOverview(page) {
       <div class="stat" data-tone="stock">
         <div class="stat-label">Tồn kho hiện tại</div>
         <div class="stat-value num">${fmtNum(s.stockRemaining)}</div>
-        <div class="stat-sub">${s.productFilter ? '1 sản phẩm đang lọc' : state.products.length + ' sản phẩm'} · không lọc theo ngày</div>
+        <div class="stat-sub">${s.productFilter ? '1 sản phẩm đang lọc' : activeProducts().length + ' sản phẩm'} · không lọc theo ngày</div>
       </div>
       <div class="stat" data-tone="cost">
         <div class="stat-label">Chi phí</div>
@@ -1439,7 +1504,7 @@ function renderOverview(page) {
 
     <div class="section card">
       <div class="card-title"><span>Tồn kho theo sản phẩm</span></div>
-      ${state.products.length === 0 ? `
+      ${activeProducts().length === 0 ? `
         <div class="empty">
           <div class="empty-icon">∅</div>
           <div>Chưa có sản phẩm. Thêm sản phẩm ở tab "Sản phẩm".</div>
@@ -1458,7 +1523,7 @@ function renderOverview(page) {
               </tr>
             </thead>
             <tbody>
-              ${state.products
+              ${activeProducts()
                 .filter(p => !overviewFilter.productId || p.id === overviewFilter.productId)
                 .map(p => {
                   const total = totalStockOfProduct(p);
@@ -1552,13 +1617,13 @@ function renderOverview(page) {
 let productSearch = '';
 
 function renderProducts(page) {
-  const filtered = state.products.filter(p =>
+  const filtered = activeProducts().filter(p =>
     !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase())
   );
 
   page.innerHTML = `
     <h2 class="page-title">Sản phẩm</h2>
-    <p class="page-subtitle"><span class="accent-line"></span>${state.products.length} sản phẩm trong danh mục</p>
+    <p class="page-subtitle"><span class="accent-line"></span>${activeProducts().length} sản phẩm trong danh mục</p>
 
     <div class="filter-bar">
       <input type="search" class="input" id="prodSearch" placeholder="Tìm theo tên..." value="${escapeHtml(productSearch)}">
@@ -1912,15 +1977,14 @@ function cloneProduct(id) {
 function deleteProduct(id) {
   const p = getProduct(id);
   if (!p) return;
-  const linkedTx = state.transactions.filter(t => t.productId === id).length;
+  const linkedTx = state.transactions.filter(t => t.productId === id && !t.deleted).length;
   const msg = linkedTx > 0
-    ? `Sản phẩm "${p.name}" có ${linkedTx} giao dịch liên quan. Xoá sản phẩm sẽ xoá hết các giao dịch này. Tiếp tục?`
-    : `Xoá sản phẩm "${p.name}"?`;
+    ? `Xoá sản phẩm "${p.name}"?\n\nCó ${linkedTx} giao dịch liên quan sẽ bị xoá theo.\n\n💡 Bạn có thể phục hồi từ tab Lịch sử (chọn loại "Đã xoá").`
+    : `Xoá sản phẩm "${p.name}"?\n\n💡 Bạn có thể phục hồi từ tab Lịch sử (chọn loại "Đã xoá").`;
   if (!confirm(msg)) return;
-  state.products = state.products.filter(x => x.id !== id);
-  state.transactions = state.transactions.filter(t => t.productId !== id);
+  softDeleteProduct(id);
   saveState();
-  showToast('Đã xoá sản phẩm');
+  showToast('Đã chuyển vào thùng rác');
   render();
 }
 
@@ -1934,11 +1998,11 @@ let stockInSharedDate = todayInputDate();
 let stockInSharedNote = '';
 
 function renderStockIn(page) {
-  if (state.products.length === 0) {
+  if (activeProducts().length === 0) {
     page.innerHTML = noProductsHTML('Nhập kho');
     return;
   }
-  const initial = stockInPreselect || state.products[0].id;
+  const initial = stockInPreselect || activeProducts()[0].id;
   stockInPreselect = null;
 
   page.innerHTML = `
@@ -2015,7 +2079,7 @@ function renderStockIn(page) {
   const priceEl = page.querySelector('#in_price');
   const qtyEl = page.querySelector('#in_qty');
 
-  productSel.innerHTML = state.products.map(p =>
+  productSel.innerHTML = activeProducts().map(p =>
     `<option value="${p.id}" ${p.id===initial?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
 
   function refillSizes() {
@@ -2171,7 +2235,7 @@ let stockOutSharedDate = todayInputDate();
 let stockOutSharedNote = '';
 
 function renderStockOut(page) {
-  if (state.products.length === 0) {
+  if (activeProducts().length === 0) {
     page.innerHTML = noProductsHTML('Bán ra');
     return;
   }
@@ -2249,7 +2313,7 @@ function renderStockOut(page) {
   const qtyEl = page.querySelector('#out_qty');
   const stockHint = page.querySelector('#out_stock_hint');
 
-  productSel.innerHTML = state.products.map(p =>
+  productSel.innerHTML = activeProducts().map(p =>
     `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
 
   function refillSizes() {
@@ -2394,7 +2458,7 @@ function renderStockOut(page) {
 }
 
 function recentTransactionsHTML(type) {
-  const list = state.transactions.filter(t => t.type === type).slice(0, 5);
+  const list = activeTransactions().filter(t => t.type === type).slice(0, 5);
   if (list.length === 0) return `<div class="text-mute text-sm" style="padding:12px 0">Chưa có giao dịch</div>`;
   return `<div id="recent_list">${list.map(t => {
     const p = getProduct(t.productId);
@@ -2426,10 +2490,10 @@ function bindRecentTxActions(page) {
   });
   page.querySelectorAll('[data-rm-tx-recent]').forEach(b => {
     b.addEventListener('click', () => {
-      if (!confirm('Xoá giao dịch này?')) return;
-      state.transactions = state.transactions.filter(t => t.id !== b.dataset.rmTxRecent);
+      if (!confirm('Chuyển giao dịch này vào thùng rác?\n\n💡 Có thể phục hồi từ tab Lịch sử (loại "Đã xoá").')) return;
+      softDeleteTransaction(b.dataset.rmTxRecent);
       saveState();
-      showToast('Đã xoá giao dịch');
+      showToast('Đã chuyển vào thùng rác');
       render();
     });
   });
@@ -2494,7 +2558,7 @@ function openEditTransactionModal(txId) {
       const qtyEl = modal.querySelector('#ed_qty');
       const sumEl = modal.querySelector('#ed_summary');
 
-      productSel.innerHTML = state.products.map(p =>
+      productSel.innerHTML = activeProducts().map(p =>
         `<option value="${p.id}" ${p.id===draft.productId?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
 
       function refillSizes(keepCurrentSize) {
@@ -2623,7 +2687,7 @@ let costDraft = [];
 function renderCosts(page) {
   const totalsByCat = COST_CATEGORIES.map(c => ({
     ...c,
-    total: state.costs.filter(x => x.category === c.key).reduce((s,x)=>s+Number(x.amount),0)
+    total: activeCosts().filter(x => x.category === c.key).reduce((s,x)=>s+Number(x.amount),0)
   }));
 
   page.innerHTML = `
@@ -2700,8 +2764,8 @@ function renderCosts(page) {
     </div>
 
     <div class="section card">
-      <div class="card-title"><span>Lịch sử chi phí (${state.costs.length})</span></div>
-      ${state.costs.length === 0 ? `
+      <div class="card-title"><span>Lịch sử chi phí (${activeCosts().length})</span></div>
+      ${activeCosts().length === 0 ? `
         <div class="empty"><div class="text-mute text-sm">Chưa có chi phí nào</div></div>
       ` : `
         <div class="table-wrap">
@@ -2716,7 +2780,7 @@ function renderCosts(page) {
               </tr>
             </thead>
             <tbody>
-              ${state.costs.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(c => `
+              ${activeCosts().slice().sort((a,b)=>b.date.localeCompare(a.date)).map(c => `
                 <tr>
                   <td data-label="Ngày">${fmtDate(c.date)}</td>
                   <td data-label="Danh mục"><span class="chip">${escapeHtml(costLabel(c.category))}</span></td>
@@ -2801,9 +2865,10 @@ function renderCosts(page) {
 
   page.querySelectorAll('[data-rm-cost]').forEach(b => {
     b.addEventListener('click', () => {
-      if (!confirm('Xoá chi phí này?')) return;
-      state.costs = state.costs.filter(c => c.id !== b.dataset.rmCost);
+      if (!confirm('Chuyển chi phí này vào thùng rác?\n\n💡 Có thể phục hồi từ tab Lịch sử (loại "Đã xoá").')) return;
+      softDeleteCost(b.dataset.rmCost);
       saveState();
+      showToast('Đã chuyển vào thùng rác');
       render();
     });
   });
@@ -2818,44 +2883,80 @@ function renderCosts(page) {
 let historyFilter = { type: 'all', productId: '', from: '', to: '' };
 
 function renderHistory(page) {
+  const showDeleted = historyFilter.type === 'deleted';
+
   const items = [];
-  for (const t of state.transactions) {
-    if (historyFilter.type !== 'all' && historyFilter.type !== t.type) continue;
-    if (historyFilter.productId && t.productId !== historyFilter.productId) continue;
-    if (historyFilter.from && t.date < historyFilter.from) continue;
-    if (historyFilter.to && t.date > historyFilter.to) continue;
-    items.push({ ...t, kind: 'tx' });
+  // Giao dịch
+  if (historyFilter.type !== 'cost') { // tab cost không có giao dịch
+    for (const t of state.transactions) {
+      // Lọc theo trạng thái xoá
+      if (showDeleted) {
+        if (!t.deleted) continue;
+      } else {
+        if (t.deleted) continue;
+        // Lọc theo type cụ thể (in/out)
+        if (historyFilter.type !== 'all' && historyFilter.type !== t.type) continue;
+      }
+      if (historyFilter.productId && t.productId !== historyFilter.productId) continue;
+      if (historyFilter.from && t.date < historyFilter.from) continue;
+      if (historyFilter.to && t.date > historyFilter.to) continue;
+      items.push({ ...t, kind: 'tx' });
+    }
   }
-  if (historyFilter.type === 'all' || historyFilter.type === 'cost') {
+  // Chi phí
+  if (historyFilter.type === 'all' || historyFilter.type === 'cost' || historyFilter.type === 'deleted') {
     for (const c of state.costs) {
-      if (historyFilter.productId) continue;
+      if (showDeleted) {
+        if (!c.deleted) continue;
+      } else {
+        if (c.deleted) continue;
+      }
+      if (historyFilter.productId) continue; // chi phí không gắn SP
       if (historyFilter.from && c.date < historyFilter.from) continue;
       if (historyFilter.to && c.date > historyFilter.to) continue;
       items.push({ ...c, kind: 'cost' });
     }
   }
+  // Sản phẩm đã xoá (chỉ hiện trong "Đã xoá")
+  if (showDeleted) {
+    for (const p of state.products) {
+      if (!p.deleted) continue;
+      // Không lọc theo product/from/to vì sản phẩm không có ngày tx
+      items.push({
+        ...p,
+        kind: 'product',
+        date: p.deletedAt ? new Date(p.deletedAt).toISOString().slice(0,10) : ''
+      });
+    }
+  }
   items.sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+
+  // Đếm thùng rác (cho hiển thị badge)
+  const trashCount = state.products.filter(p=>p.deleted).length
+    + state.transactions.filter(t=>t.deleted).length
+    + state.costs.filter(c=>c.deleted).length;
 
   page.innerHTML = `
     <h2 class="page-title">Lịch sử</h2>
-    <p class="page-subtitle"><span class="accent-line"></span>${items.length} bản ghi</p>
+    <p class="page-subtitle"><span class="accent-line"></span>${items.length} bản ghi${showDeleted ? ' (đã xoá)' : ''}</p>
 
     <div class="card section">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
         <div class="field">
           <label>Loại</label>
           <select class="select" id="h_type">
-            <option value="all">Tất cả</option>
+            <option value="all" ${historyFilter.type==='all'?'selected':''}>Tất cả (đang hoạt động)</option>
             <option value="in" ${historyFilter.type==='in'?'selected':''}>Nhập kho</option>
             <option value="out" ${historyFilter.type==='out'?'selected':''}>Bán ra</option>
             <option value="cost" ${historyFilter.type==='cost'?'selected':''}>Chi phí</option>
+            <option value="deleted" ${historyFilter.type==='deleted'?'selected':''}>🗑️ Đã xoá ${trashCount>0?'('+trashCount+')':''}</option>
           </select>
         </div>
         <div class="field">
           <label>Sản phẩm</label>
-          <select class="select" id="h_product">
+          <select class="select" id="h_product" ${showDeleted?'disabled':''}>
             <option value="">— Tất cả —</option>
-            ${state.products.map(p => `<option value="${p.id}" ${historyFilter.productId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
+            ${activeProducts().map(p => `<option value="${p.id}" ${historyFilter.productId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
           </select>
         </div>
       </div>
@@ -2869,12 +2970,18 @@ function renderHistory(page) {
           <input type="date" class="input" id="h_to" value="${historyFilter.to}">
         </div>
       </div>
+      ${showDeleted ? `
+        <div class="divider"></div>
+        <p class="text-xs text-mute" style="margin:0">
+          💡 Chế độ <strong>Thùng rác</strong>: hiện sản phẩm/giao dịch/chi phí đã xoá. Bấm <strong>Phục hồi</strong> để khôi phục.
+        </p>
+      ` : ''}
     </div>
 
     <div class="card">
       ${items.length === 0 ? `
-        <div class="empty"><div class="empty-icon">∅</div><div>Không có bản ghi</div></div>
-      ` : items.map(it => historyEntryHTML(it)).join('')}
+        <div class="empty"><div class="empty-icon">${showDeleted?'🗑️':'∅'}</div><div>${showDeleted?'Thùng rác trống':'Không có bản ghi'}</div></div>
+      ` : items.map(it => historyEntryHTML(it, showDeleted)).join('')}
     </div>
   `;
 
@@ -2883,18 +2990,72 @@ function renderHistory(page) {
   page.querySelector('#h_from').addEventListener('change', e => { historyFilter.from = e.target.value; renderPage(); });
   page.querySelector('#h_to').addEventListener('change', e => { historyFilter.to = e.target.value; renderPage(); });
 
+  // Soft delete
   page.querySelectorAll('[data-rm-tx]').forEach(b => {
     b.addEventListener('click', () => {
-      if (!confirm('Xoá giao dịch này?')) return;
-      state.transactions = state.transactions.filter(t => t.id !== b.dataset.rmTx);
+      if (!confirm('Chuyển giao dịch này vào thùng rác?')) return;
+      softDeleteTransaction(b.dataset.rmTx);
       saveState(); render();
     });
   });
   page.querySelectorAll('[data-rm-cost]').forEach(b => {
     b.addEventListener('click', () => {
-      if (!confirm('Xoá chi phí này?')) return;
-      state.costs = state.costs.filter(c => c.id !== b.dataset.rmCost);
+      if (!confirm('Chuyển chi phí này vào thùng rác?')) return;
+      softDeleteCost(b.dataset.rmCost);
       saveState(); render();
+    });
+  });
+  // Phục hồi
+  page.querySelectorAll('[data-restore-tx]').forEach(b => {
+    b.addEventListener('click', () => {
+      restoreTransaction(b.dataset.restoreTx);
+      saveState();
+      showToast('Đã phục hồi giao dịch');
+      render();
+    });
+  });
+  page.querySelectorAll('[data-restore-cost]').forEach(b => {
+    b.addEventListener('click', () => {
+      restoreCost(b.dataset.restoreCost);
+      saveState();
+      showToast('Đã phục hồi chi phí');
+      render();
+    });
+  });
+  page.querySelectorAll('[data-restore-product]').forEach(b => {
+    b.addEventListener('click', () => {
+      restoreProduct(b.dataset.restoreProduct);
+      saveState();
+      showToast('Đã phục hồi sản phẩm và các giao dịch liên quan');
+      render();
+    });
+  });
+  // Xoá vĩnh viễn (purge)
+  page.querySelectorAll('[data-purge-tx]').forEach(b => {
+    b.addEventListener('click', () => {
+      if (!confirm('Xoá VĨNH VIỄN giao dịch này? Không thể phục hồi sau đó.')) return;
+      purgeTransaction(b.dataset.purgeTx);
+      saveState();
+      showToast('Đã xoá vĩnh viễn');
+      render();
+    });
+  });
+  page.querySelectorAll('[data-purge-cost]').forEach(b => {
+    b.addEventListener('click', () => {
+      if (!confirm('Xoá VĨNH VIỄN chi phí này? Không thể phục hồi sau đó.')) return;
+      purgeCost(b.dataset.purgeCost);
+      saveState();
+      showToast('Đã xoá vĩnh viễn');
+      render();
+    });
+  });
+  page.querySelectorAll('[data-purge-product]').forEach(b => {
+    b.addEventListener('click', () => {
+      if (!confirm('Xoá VĨNH VIỄN sản phẩm này và các giao dịch liên quan? Không thể phục hồi sau đó.')) return;
+      purgeProduct(b.dataset.purgeProduct);
+      saveState();
+      showToast('Đã xoá vĩnh viễn');
+      render();
     });
   });
   page.querySelectorAll('[data-edit-tx]').forEach(b => {
@@ -2905,32 +3066,47 @@ function renderHistory(page) {
   });
 }
 
-function historyEntryHTML(it) {
+function historyEntryHTML(it, deletedMode) {
   if (it.kind === 'tx') {
-    const p = getProduct(it.productId);
+    const p = state.products.find(x => x.id === it.productId);
+    const productName = p ? p.name : '(SP đã xoá)';
     const total = it.qty * it.unitPrice;
+    const actionsHTML = deletedMode ? `
+      <button class="btn btn-secondary btn-sm" data-restore-tx="${it.id}">↩ Phục hồi</button>
+      <button class="btn btn-ghost btn-sm" data-purge-tx="${it.id}" style="color:var(--danger)">Xoá vĩnh viễn</button>
+    ` : `
+      <button class="btn btn-ghost btn-sm" data-edit-tx="${it.id}">Sửa</button>
+      <button class="btn btn-ghost btn-sm" data-rm-tx="${it.id}" style="color:var(--danger)">Xoá</button>
+    `;
     return `
-      <div class="history-entry">
+      <div class="history-entry" ${deletedMode?'style="opacity:0.7"':''}>
         <div class="history-marker ${it.type}">${it.type==='in'?'↓':'↑'}</div>
         <div>
           <div class="history-info-1">
-            ${it.type==='in'?'Nhập':'Bán'} · ${escapeHtml(p?p.name:'?')}
+            ${it.type==='in'?'Nhập':'Bán'} · ${escapeHtml(productName)}
             <span class="text-mute">· size ${escapeHtml(it.size)}</span>
+            ${it.deletedByProduct?'<span class="chip" style="margin-left:4px">xoá theo SP</span>':''}
           </div>
           <div class="history-info-2">${fmtDate(it.date)} · SL ${it.qty} × ${fmtVND(it.unitPrice)}${it.note?' · '+escapeHtml(it.note):''}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
           <div class="history-amount num ${it.type==='in'?'type-in':'type-out'}">${it.type==='in'?'-':'+'}${fmtVND(total)}</div>
-          <div style="display:flex;gap:4px">
-            <button class="btn btn-ghost btn-sm" data-edit-tx="${it.id}">Sửa</button>
-            <button class="btn btn-ghost btn-sm" data-rm-tx="${it.id}" style="color:var(--danger)">Xoá</button>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
+            ${actionsHTML}
           </div>
         </div>
       </div>
     `;
-  } else {
+  } else if (it.kind === 'cost') {
+    const actionsHTML = deletedMode ? `
+      <button class="btn btn-secondary btn-sm" data-restore-cost="${it.id}">↩ Phục hồi</button>
+      <button class="btn btn-ghost btn-sm" data-purge-cost="${it.id}" style="color:var(--danger)">Xoá vĩnh viễn</button>
+    ` : `
+      <button class="btn btn-ghost btn-sm" data-edit-cost="${it.id}">Sửa</button>
+      <button class="btn btn-ghost btn-sm" data-rm-cost="${it.id}" style="color:var(--danger)">Xoá</button>
+    `;
     return `
-      <div class="history-entry">
+      <div class="history-entry" ${deletedMode?'style="opacity:0.7"':''}>
         <div class="history-marker cost">$</div>
         <div>
           <div class="history-info-1">Chi phí · ${escapeHtml(costLabel(it.category))}</div>
@@ -2938,9 +3114,25 @@ function historyEntryHTML(it) {
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
           <div class="history-amount num type-cost">-${fmtVND(it.amount)}</div>
-          <div style="display:flex;gap:4px">
-            <button class="btn btn-ghost btn-sm" data-edit-cost="${it.id}">Sửa</button>
-            <button class="btn btn-ghost btn-sm" data-rm-cost="${it.id}" style="color:var(--danger)">Xoá</button>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
+            ${actionsHTML}
+          </div>
+        </div>
+      </div>
+    `;
+  } else if (it.kind === 'product') {
+    const sizes = it.sizes.map(s=>s.size).join(', ');
+    return `
+      <div class="history-entry" style="opacity:0.7">
+        <div class="history-marker" style="background:var(--bg-soft);color:var(--ink-soft)">P</div>
+        <div>
+          <div class="history-info-1">Sản phẩm · ${escapeHtml(it.name)}</div>
+          <div class="history-info-2">${escapeHtml(it.category||'')} · sizes: ${escapeHtml(sizes)}${it.deletedAt?' · xoá ngày '+fmtDate(it.date):''}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+          <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
+            <button class="btn btn-secondary btn-sm" data-restore-product="${it.id}">↩ Phục hồi</button>
+            <button class="btn btn-ghost btn-sm" data-purge-product="${it.id}" style="color:var(--danger)">Xoá vĩnh viễn</button>
           </div>
         </div>
       </div>
@@ -2991,15 +3183,18 @@ function renderData(page) {
       <div class="form-grid cols-3" style="gap:8px">
         <div class="stat" data-tone="stock">
           <div class="stat-label">Sản phẩm</div>
-          <div class="stat-value num">${state.products.length}</div>
+          <div class="stat-value num">${activeProducts().length}</div>
+          ${state.products.length > activeProducts().length ? `<div class="stat-sub">+ ${state.products.length - activeProducts().length} đã xoá</div>` : ''}
         </div>
         <div class="stat" data-tone="revenue">
           <div class="stat-label">Giao dịch</div>
-          <div class="stat-value num">${state.transactions.length}</div>
+          <div class="stat-value num">${activeTransactions().length}</div>
+          ${state.transactions.length > activeTransactions().length ? `<div class="stat-sub">+ ${state.transactions.length - activeTransactions().length} đã xoá</div>` : ''}
         </div>
         <div class="stat" data-tone="cost">
           <div class="stat-label">Chi phí</div>
-          <div class="stat-value num">${state.costs.length}</div>
+          <div class="stat-value num">${activeCosts().length}</div>
+          ${state.costs.length > activeCosts().length ? `<div class="stat-sub">+ ${state.costs.length - activeCosts().length} đã xoá</div>` : ''}
         </div>
       </div>
     </div>
