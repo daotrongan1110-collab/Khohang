@@ -107,12 +107,31 @@
     z-index: 50;
     backdrop-filter: blur(8px);
     background: rgba(245,241,234,0.92);
+    transition: padding 0.2s;
   }
   .brand {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 12px;
+    transition: max-height 0.25s ease, opacity 0.2s ease, margin 0.25s ease;
+    overflow: hidden;
+    max-height: 60px;
+  }
+  /* Khi scroll trên mobile: ẩn brand, chỉ giữ tab */
+  @media (max-width: 640px) {
+    .header.scrolled {
+      padding-top: 10px;
+      padding-bottom: 10px;
+    }
+    .header.scrolled .brand {
+      max-height: 0;
+      opacity: 0;
+      margin: 0;
+    }
+    .header.scrolled .tabs-wrap {
+      margin-top: 0;
+    }
   }
   .brand-name {
     font-family: var(--font-display);
@@ -133,48 +152,41 @@
     color: var(--ink-mute);
   }
 
-  /* TAB BAR (BOTTOM ON MOBILE) */
+  /* TAB BAR */
   .tabs-wrap {
-    position: relative;
     margin-top: 16px;
   }
-  .tabs-wrap::after {
-    content: '';
-    position: absolute;
-    top: 0; right: 0;
-    width: 32px;
-    height: 100%;
-    background: linear-gradient(to right, transparent, rgba(245,241,234,0.95));
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-  .tabs-wrap.has-overflow::after {
-    opacity: 1;
-  }
   .tabs {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
     gap: 4px;
-    overflow-x: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    scroll-behavior: smooth;
   }
-  .tabs::-webkit-scrollbar { display: none; }
   .tab {
-    flex: 0 0 auto;
-    padding: 10px 16px;
+    padding: 9px 8px;
     font-size: 13px;
     font-weight: 500;
     border-radius: 999px;
     color: var(--ink-soft);
     transition: all 0.15s;
+    text-align: center;
     white-space: nowrap;
   }
   .tab:hover { background: var(--bg-soft); }
   .tab.active {
     background: var(--ink);
     color: var(--bg);
+  }
+  /* Desktop: 1 dòng tự co giãn */
+  @media (min-width: 640px) {
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .tab {
+      flex: 0 0 auto;
+      padding: 10px 16px;
+    }
   }
 
   /* MAIN */
@@ -1241,31 +1253,32 @@ function render() {
     el.addEventListener('click', () => {
       currentTab = el.dataset.tab;
       render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   });
 
-  // Detect overflow để hiện gradient + scroll active tab vào view
-  const tabsNav = document.getElementById('tabs_nav');
-  const tabsWrap = document.getElementById('tabs_wrap');
-  if (tabsNav && tabsWrap) {
-    const checkOverflow = () => {
-      const hasOverflow = tabsNav.scrollWidth > tabsNav.clientWidth;
-      const isAtEnd = tabsNav.scrollLeft + tabsNav.clientWidth >= tabsNav.scrollWidth - 5;
-      tabsWrap.classList.toggle('has-overflow', hasOverflow && !isAtEnd);
-    };
-    checkOverflow();
-    tabsNav.addEventListener('scroll', checkOverflow);
-    window.addEventListener('resize', checkOverflow);
-
-    // Auto cuộn tab active vào giữa tầm nhìn
-    const activeTab = tabsNav.querySelector('.tab.active');
-    if (activeTab) {
-      const navRect = tabsNav.getBoundingClientRect();
-      const tabRect = activeTab.getBoundingClientRect();
-      const offsetCenter = tabRect.left - navRect.left - (navRect.width - tabRect.width) / 2;
-      tabsNav.scrollLeft += offsetCenter;
-    }
+  // Scroll detection: ẩn brand khi cuộn xuống (mobile)
+  const headerEl = document.querySelector('.header');
+  if (headerEl && !window._scrollListenerAdded) {
+    window._scrollListenerAdded = true;
+    let ticking = false;
+    window.addEventListener('scroll', () => {
+      if (!ticking) {
+        requestAnimationFrame(() => {
+          const h = document.querySelector('.header');
+          if (h) {
+            if (window.scrollY > 30) h.classList.add('scrolled');
+            else h.classList.remove('scrolled');
+          }
+          ticking = false;
+        });
+        ticking = true;
+      }
+    }, { passive: true });
   }
+  // Áp dụng class ngay nếu đang ở vị trí đã cuộn
+  if (window.scrollY > 30) headerEl?.classList.add('scrolled');
+
   renderPage();
 }
 
@@ -1372,7 +1385,7 @@ function renderOverview(page) {
         <span>Bộ lọc</span>
         <button class="btn btn-ghost btn-sm" id="clearFilter">Xoá lọc</button>
       </div>
-      <div class="form-grid cols-3">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
         <div class="field">
           <label>Từ ngày</label>
           <input type="date" class="input" id="filterFrom" value="${overviewFilter.from}">
@@ -1381,15 +1394,15 @@ function renderOverview(page) {
           <label>Đến ngày</label>
           <input type="date" class="input" id="filterTo" value="${overviewFilter.to}">
         </div>
-        <div class="field">
-          <label>Sản phẩm</label>
-          <select class="select" id="filterProduct">
-            <option value="">— Tất cả —</option>
-            ${state.products.map(p => `
-              <option value="${p.id}" ${overviewFilter.productId===p.id?'selected':''}>${escapeHtml(p.name)}</option>
-            `).join('')}
-          </select>
-        </div>
+      </div>
+      <div class="field">
+        <label>Sản phẩm</label>
+        <select class="select" id="filterProduct">
+          <option value="">— Tất cả —</option>
+          ${state.products.map(p => `
+            <option value="${p.id}" ${overviewFilter.productId===p.id?'selected':''}>${escapeHtml(p.name)}</option>
+          `).join('')}
+        </select>
       </div>
     </div>
 
@@ -1626,18 +1639,20 @@ function openProductModal(productId) {
   const editing = productId ? getProduct(productId) : null;
   const product = editing ? JSON.parse(JSON.stringify(editing)) : {
     id: uid(), name: '', category: 'Áo',
-    sizes: [{ size:'M', costPrice:0, sellPrice:0 }],
+    sizes: [{ size:'M', costPrice:0, sellPrice:0, initialQty: 0 }],
     lowStockThreshold: 5
   };
+  // Đảm bảo size cũ không có initialQty
+  if (editing) product.sizes.forEach(s => s.initialQty = 0);
 
   showModal({
     title: editing ? 'Sửa sản phẩm' : 'Thêm sản phẩm',
-    body: () => productFormHTML(product),
+    body: () => productFormHTML(product, !editing),
     onMount: (modal) => bindProductForm(modal, product, !!editing),
   });
 }
 
-function productFormHTML(p) {
+function productFormHTML(p, isNew) {
   return `
     <div class="form-grid cols-2">
       <div class="field" style="grid-column:1/-1">
@@ -1653,25 +1668,44 @@ function productFormHTML(p) {
       </div>
       <div class="field">
         <label>Ngưỡng cảnh báo (size)</label>
-        <input type="number" min="0" class="input" id="p_threshold" value="${p.lowStockThreshold||5}">
+        <input type="number" min="0" class="input" id="p_threshold" value="${p.lowThreshold||p.lowStockThreshold||5}">
       </div>
     </div>
 
     <div class="divider"></div>
 
     <div class="field">
-      <label>Các size (giá nhập / giá bán) *</label>
+      <label>Các size ${isNew ? '(giá nhập / giá bán / SL nhập ban đầu)' : '(giá nhập / giá bán)'} *</label>
       <div id="sizes_list"></div>
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
         <input class="input" id="new_size" placeholder="Tên size mới (S, M, L...)" style="flex:1;min-width:140px">
         <button class="btn btn-secondary" id="add_size">＋ Thêm size</button>
       </div>
     </div>
+
+    ${isNew ? `
+      <div class="divider"></div>
+      <div class="form-grid cols-2">
+        <div class="field">
+          <label>Ngày nhập kho ban đầu</label>
+          <input type="date" class="input" id="p_initial_date" value="${todayInputDate()}">
+        </div>
+        <div class="field">
+          <label>Ghi chú nhập</label>
+          <input class="input" id="p_initial_note" placeholder="VD: Nhập đợt đầu" value="">
+        </div>
+      </div>
+      <p class="text-xs text-mute" style="margin-top:8px">
+        💡 Các size có "SL nhập" > 0 sẽ tự động tạo giao dịch nhập kho khi lưu sản phẩm.
+        Các size để 0 thì chỉ tạo SP, không nhập kho.
+      </p>
+    ` : ''}
   `;
 }
 
 function bindProductForm(modal, p, editing) {
   const sizesList = modal.querySelector('#sizes_list');
+  const isNew = !editing;
 
   // Lưu tên size gốc (trước khi user sửa) để build mapping rename khi save
   const originalSizes = editing ? p.sizes.map(s => s.size) : [];
@@ -1682,17 +1716,26 @@ function bindProductForm(modal, p, editing) {
       const txCount = wasOriginal && editing
         ? state.transactions.filter(t => t.productId === p.id && t.size === originalSizes[i]).length
         : 0;
+      // Layout: với tạo mới thêm 1 cột SL nhập
+      const grid = isNew ? 'cols-4' : 'cols-3';
       return `
-        <div class="form-grid cols-3" style="gap:6px;margin-bottom:6px">
+        <div class="form-grid ${grid}" style="gap:6px;margin-bottom:6px">
           <div style="display:flex;flex-direction:column;gap:2px">
             <input class="input" data-szname="${i}" value="${escapeHtml(sz.size)}" placeholder="Size">
             ${txCount > 0 ? `<span class="text-xs text-mute" style="padding-left:2px">${txCount} giao dịch</span>` : ''}
           </div>
           <input type="number" min="0" class="input num" data-szcost="${i}" value="${sz.costPrice||0}" placeholder="Giá nhập">
-          <div style="display:flex;gap:4px">
-            <input type="number" min="0" class="input num" data-szsell="${i}" value="${sz.sellPrice||0}" placeholder="Giá bán" style="flex:1">
-            <button class="btn btn-danger btn-sm" data-rmsize="${i}" title="Xoá size">×</button>
-          </div>
+          <input type="number" min="0" class="input num" data-szsell="${i}" value="${sz.sellPrice||0}" placeholder="Giá bán">
+          ${isNew ? `
+            <div style="display:flex;gap:4px">
+              <input type="number" min="0" class="input num" data-szqty="${i}" value="${sz.initialQty||0}" placeholder="SL nhập" style="flex:1" title="Số lượng nhập kho ban đầu">
+              <button class="btn btn-danger btn-sm" data-rmsize="${i}" title="Xoá size">×</button>
+            </div>
+          ` : `
+            <div>
+              <button class="btn btn-danger btn-sm" data-rmsize="${i}" title="Xoá size">×</button>
+            </div>
+          `}
         </div>
       `;
     }).join('');
@@ -1705,11 +1748,13 @@ function bindProductForm(modal, p, editing) {
     sizesList.querySelectorAll('[data-szsell]').forEach(el => {
       el.addEventListener('input', e => p.sizes[+e.target.dataset.szsell].sellPrice = +e.target.value);
     });
+    sizesList.querySelectorAll('[data-szqty]').forEach(el => {
+      el.addEventListener('input', e => p.sizes[+e.target.dataset.szqty].initialQty = +e.target.value);
+    });
     sizesList.querySelectorAll('[data-rmsize]').forEach(el => {
       el.addEventListener('click', () => {
         if (p.sizes.length <= 1) return showToast('Cần ít nhất 1 size', true);
         const idx = +el.dataset.rmsize;
-        // Khi xoá, cũng xoá khỏi originalSizes để mapping vẫn đúng
         p.sizes.splice(idx, 1);
         if (idx < originalSizes.length) originalSizes.splice(idx, 1);
         renderSizes();
@@ -1737,86 +1782,112 @@ function bindProductForm(modal, p, editing) {
     if (p.sizes.length === 0) return showToast('Cần ít nhất 1 size', true);
     if (p.sizes.some(s => !s.size.trim())) return showToast('Tên size không được rỗng', true);
 
-    // Trim tên size
     p.sizes.forEach(s => s.size = s.size.trim());
 
-    // Check size trùng nhau
     const sizeNames = p.sizes.map(s => s.size);
     const uniqueSizes = new Set(sizeNames);
     if (uniqueSizes.size !== sizeNames.length) {
       return showToast('Có size bị trùng tên', true);
     }
 
-    // === Xử lý đổi tên / xoá size khi đang sửa ===
-    if (editing) {
-      // Build mapping: original name -> new name (theo vị trí index)
-      // Vì size mới (do user thêm vào sau) thì không có original tương ứng
-      const renameMap = {}; // { 'M': 'Medium' }
-      for (let i = 0; i < originalSizes.length; i++) {
-        const oldName = originalSizes[i];
-        // Tìm size hiện tại còn lại đang ở vị trí i (nếu user không xoá size đó)
-        if (i < p.sizes.length) {
-          const newName = p.sizes[i].size;
-          if (oldName !== newName) {
-            renameMap[oldName] = newName;
-          }
-        }
-      }
+    // === Tạo mới: tự tạo giao dịch nhập kho cho size có SL ban đầu > 0 ===
+    if (isNew) {
+      const initialDate = modal.querySelector('#p_initial_date')?.value || todayInputDate();
+      const initialNote = modal.querySelector('#p_initial_note')?.value || 'Nhập kho ban đầu';
 
-      // Tìm các size cũ đã bị xoá hoàn toàn (không còn trong list mới)
-      const newSizeNames = p.sizes.map(s => s.size);
-      const removedSizes = originalSizes.filter((s, i) => {
-        // Nếu size cũ ở vị trí i bị xoá khỏi list (do user nhấn x)
-        // nó sẽ không còn trong p.sizes nữa, kể cả với tên mới qua rename
-        // Logic: size cũ bị xoá = không có trong newSizeNames VÀ không nằm trong renameMap
-        return !newSizeNames.includes(s) && !renameMap[s];
+      const newTransactions = [];
+      p.sizes.forEach(sz => {
+        const qty = +sz.initialQty || 0;
+        if (qty > 0) {
+          newTransactions.push({
+            id: uid(),
+            type: 'in',
+            productId: p.id,
+            size: sz.size,
+            qty: qty,
+            unitPrice: +sz.costPrice || 0,
+            date: initialDate,
+            note: initialNote
+          });
+        }
+        // Xoá initialQty trước khi lưu (không cần lưu vào product schema)
+        delete sz.initialQty;
       });
 
-      // Cảnh báo nếu xoá size có giao dịch
-      if (removedSizes.length > 0) {
-        const orphanTx = state.transactions.filter(t =>
-          t.productId === p.id && removedSizes.includes(t.size)
-        );
-        if (orphanTx.length > 0) {
-          const sizeList = removedSizes.join(', ');
-          const ok = confirm(
-            `⚠️ Bạn đang XOÁ size: ${sizeList}\n\n` +
-            `Có ${orphanTx.length} giao dịch cũ liên quan sẽ bị xoá theo.\n\n` +
-            `Bấm OK để xác nhận xoá, hoặc Cancel để quay lại.\n\n` +
-            `💡 Nếu bạn chỉ muốn ĐỔI TÊN size (VD: M → Medium): không bấm nút × ` +
-            `mà chỉ sửa trực tiếp tên trong ô input — hệ thống sẽ tự cập nhật giao dịch cũ.`
-          );
-          if (!ok) return;
-          // Xoá các giao dịch của size bị xoá
-          state.transactions = state.transactions.filter(t =>
-            !(t.productId === p.id && removedSizes.includes(t.size))
-          );
-        }
-      }
-
-      // Áp dụng rename: cập nhật tên size trong giao dịch cũ
-      if (Object.keys(renameMap).length > 0) {
-        let renamedCount = 0;
-        state.transactions.forEach(t => {
-          if (t.productId === p.id && renameMap[t.size]) {
-            t.size = renameMap[t.size];
-            renamedCount++;
-          }
-        });
-        if (renamedCount > 0) {
-          // Hiện thông báo nhỏ trong toast khi save xong
-          setTimeout(() => showToast(`Đã cập nhật ${renamedCount} giao dịch theo tên size mới`), 100);
-        }
-      }
-
-      const idx = state.products.findIndex(x => x.id === p.id);
-      state.products[idx] = p;
-    } else {
       state.products.push(p);
+      if (newTransactions.length > 0) {
+        state.transactions.unshift(...newTransactions);
+      }
+      saveState();
+      closeModal();
+      const totalQty = newTransactions.reduce((s,t)=>s+t.qty, 0);
+      showToast(
+        newTransactions.length > 0
+          ? `Đã thêm SP và nhập ${totalQty} sản phẩm vào kho`
+          : 'Đã thêm sản phẩm'
+      );
+      render();
+      return;
     }
+
+    // === Sửa: xử lý đổi tên / xoá size ===
+    const renameMap = {};
+    for (let i = 0; i < originalSizes.length; i++) {
+      const oldName = originalSizes[i];
+      if (i < p.sizes.length) {
+        const newName = p.sizes[i].size;
+        if (oldName !== newName) {
+          renameMap[oldName] = newName;
+        }
+      }
+    }
+
+    const newSizeNames = p.sizes.map(s => s.size);
+    const removedSizes = originalSizes.filter((s) => {
+      return !newSizeNames.includes(s) && !renameMap[s];
+    });
+
+    if (removedSizes.length > 0) {
+      const orphanTx = state.transactions.filter(t =>
+        t.productId === p.id && removedSizes.includes(t.size)
+      );
+      if (orphanTx.length > 0) {
+        const sizeList = removedSizes.join(', ');
+        const ok = confirm(
+          `⚠️ Bạn đang XOÁ size: ${sizeList}\n\n` +
+          `Có ${orphanTx.length} giao dịch cũ liên quan sẽ bị xoá theo.\n\n` +
+          `Bấm OK để xác nhận xoá, hoặc Cancel để quay lại.\n\n` +
+          `💡 Nếu bạn chỉ muốn ĐỔI TÊN size (VD: M → Medium): không bấm nút × ` +
+          `mà chỉ sửa trực tiếp tên trong ô input — hệ thống sẽ tự cập nhật giao dịch cũ.`
+        );
+        if (!ok) return;
+        state.transactions = state.transactions.filter(t =>
+          !(t.productId === p.id && removedSizes.includes(t.size))
+        );
+      }
+    }
+
+    if (Object.keys(renameMap).length > 0) {
+      let renamedCount = 0;
+      state.transactions.forEach(t => {
+        if (t.productId === p.id && renameMap[t.size]) {
+          t.size = renameMap[t.size];
+          renamedCount++;
+        }
+      });
+      if (renamedCount > 0) {
+        setTimeout(() => showToast(`Đã cập nhật ${renamedCount} giao dịch theo tên size mới`), 100);
+      }
+    }
+
+    // Xoá initialQty trên size (không lưu vào schema)
+    p.sizes.forEach(s => delete s.initialQty);
+
+    const idx = state.products.findIndex(x => x.id === p.id);
+    state.products[idx] = p;
     saveState();
     closeModal();
-    showToast(editing ? 'Đã cập nhật' : 'Đã thêm sản phẩm');
+    showToast('Đã cập nhật');
     render();
   });
 }
@@ -1824,18 +1895,17 @@ function bindProductForm(modal, p, editing) {
 function cloneProduct(id) {
   const src = getProduct(id);
   if (!src) return;
-  // Tạo bản sao với id mới, tên thêm "(Sao chép)" để user dễ sửa
   const cloned = {
     id: uid(),
     name: src.name + ' (Sao chép)',
     category: src.category,
-    sizes: src.sizes.map(s => ({ ...s })), // deep copy sizes
+    sizes: src.sizes.map(s => ({ ...s, initialQty: 0 })),
     lowStockThreshold: src.lowStockThreshold
   };
   showModal({
     title: 'Sao chép sản phẩm',
-    body: () => productFormHTML(cloned),
-    onMount: (modal) => bindProductForm(modal, cloned, false), // false = thêm mới
+    body: () => productFormHTML(cloned, true),
+    onMount: (modal) => bindProductForm(modal, cloned, false),
   });
 }
 
@@ -2771,7 +2841,7 @@ function renderHistory(page) {
     <p class="page-subtitle"><span class="accent-line"></span>${items.length} bản ghi</p>
 
     <div class="card section">
-      <div class="form-grid cols-2">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
         <div class="field">
           <label>Loại</label>
           <select class="select" id="h_type">
@@ -2788,6 +2858,8 @@ function renderHistory(page) {
             ${state.products.map(p => `<option value="${p.id}" ${historyFilter.productId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
           </select>
         </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div class="field">
           <label>Từ ngày</label>
           <input type="date" class="input" id="h_from" value="${historyFilter.from}">
