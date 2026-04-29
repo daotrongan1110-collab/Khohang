@@ -710,6 +710,14 @@
     font-variant-numeric: tabular-nums;
   }
   .pdt-table td.size-col { text-align: left; padding-left: 2px; }
+  /* Cột Tồn: in đậm + background nhạt để nổi bật */
+  .pdt-table td.stock-col {
+    font-weight: 700;
+    background: var(--bg-soft);
+  }
+  .pdt-table th.stock-col-head {
+    background: var(--bg-soft);
+  }
   .pdt-table tr:last-child td { border-bottom: none; }
   .pdt-size {
     font-weight: 600;
@@ -1537,7 +1545,7 @@ function renderProductDetailTable() {
             <tr>
               <th class="size-col">Size</th>
               <th>Nhập</th>
-              <th>Tồn</th>
+              <th class="stock-col-head">Tồn</th>
               <th>Đã bán</th>
               <th class="meter-col">Tỉ lệ</th>
             </tr>
@@ -1550,6 +1558,14 @@ function renderProductDetailTable() {
                 r.pct <= 40 ? 2 :
                 r.pct <= 60 ? 3 :
                 r.pct <= 80 ? 4 : 5;
+              // Màu chung theo mức bán: thấp = đỏ nhạt, cao = xanh
+              const meterColor =
+                filledCells === 0 ? 'var(--line)' :
+                filledCells === 1 ? '#c84630' :   // đỏ — bán ít
+                filledCells === 2 ? '#d68a3c' :   // cam
+                filledCells === 3 ? '#b8923f' :   // vàng đồng
+                filledCells === 4 ? '#6a8a4a' :   // xanh nhạt
+                                    '#4a6b3e';    // xanh đậm — bán chạy
               const meter = Array.from({length: 5}, (_, i) =>
                 `<span class="pdt-meter-cell ${i < filledCells ? 'filled' : ''}"></span>`
               ).join('');
@@ -1557,10 +1573,10 @@ function renderProductDetailTable() {
                 <tr>
                   <td class="size-col"><span class="pdt-size">${escapeHtml(r.size)}</span></td>
                   <td>${fmtNum(r.inQ)}</td>
-                  <td class="${r.stkCls}">${fmtNum(r.stk)}</td>
+                  <td class="stock-col ${r.stkCls}">${fmtNum(r.stk)}</td>
                   <td>${fmtNum(r.outQ)}</td>
                   <td>
-                    <div class="pdt-bar-cell" style="--accent-color:${r.color}">
+                    <div class="pdt-bar-cell" style="--accent-color:${meterColor}">
                       <div class="pdt-meter">${meter}</div>
                       <span class="pdt-pct">${r.pct.toFixed(0)}%</span>
                     </div>
