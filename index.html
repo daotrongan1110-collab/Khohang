@@ -661,6 +661,88 @@
   }
   .fab:hover { transform: scale(1.05); background: #000; }
 
+  /* PRODUCT DETAIL TABLE (gộp Nhập/Bán/Tồn/Tỉ lệ) */
+  .pdt-block {
+    border-bottom: 1px solid var(--line-soft);
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+  }
+  .pdt-block:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
+  .pdt-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .pdt-name {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .pdt-totals {
+    font-size: 11px;
+    color: var(--ink-mute);
+  }
+  .pdt-totals strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .pdt-table {
+    width: 100%;
+    font-size: 12px;
+    border-collapse: collapse;
+  }
+  .pdt-table th {
+    text-align: left;
+    padding: 6px 4px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink-mute);
+    font-weight: 600;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .pdt-table th.num-col, .pdt-table td.num-col {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .pdt-table td {
+    padding: 7px 4px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .pdt-table tr:last-child td { border-bottom: none; }
+  .pdt-size {
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .pdt-bar {
+    position: relative;
+    height: 6px;
+    background: var(--bg-soft);
+    border-radius: 3px;
+    overflow: hidden;
+    min-width: 50px;
+  }
+  .pdt-bar-fill {
+    position: absolute;
+    top: 0; left: 0;
+    height: 100%;
+    border-radius: 3px;
+  }
+  .pdt-bar-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .pdt-pct {
+    font-size: 11px;
+    color: var(--ink-soft);
+    font-variant-numeric: tabular-nums;
+    min-width: 28px;
+    text-align: right;
+  }
+  /* Cell stock có màu theo trạng thái */
+  .pdt-stock-low { color: var(--danger); font-weight: 600; }
+  .pdt-stock-warn { color: var(--warn); font-weight: 600; }
+
   /* SIZE BREAKDOWN BAR */
   .size-breakdown {
     display: flex;
@@ -1388,6 +1470,92 @@ let overviewFilter = { from: '', to: '', productId: '' };
 // Bảng màu cố định cho các size, lặp lại nếu nhiều size
 const SIZE_COLORS = ['#c84630','#b8923f','#4a6b3e','#2d5b8a','#7a4e8c','#a85a3c','#5c7a8a','#8a6e3c'];
 
+function renderProductDetailTable() {
+  const filtered = activeProducts().filter(p =>
+    !overviewFilter.productId || p.id === overviewFilter.productId);
+
+  if (filtered.length === 0) {
+    return `<div class="empty"><div class="empty-icon">∅</div><div>Chưa có sản phẩm</div></div>`;
+  }
+
+  const fromTo = {
+    from: overviewFilter.from || undefined,
+    to: overviewFilter.to || undefined
+  };
+
+  return filtered.map(p => {
+    const inQtyTotal = totalInOfProduct(p.id, fromTo);
+    const outQtyTotal = totalOutOfProduct(p.id, fromTo);
+    const stockTotal = totalStockOfProduct(p);
+    const threshold = Number(p.lowStockThreshold) || 5;
+
+    // Tính từng size
+    const sizeRows = p.sizes.map((sz, i) => {
+      const inQ = activeTransactions()
+        .filter(t => t.productId===p.id && t.size===sz.size && t.type==='in'
+          && (!fromTo.from || t.date>=fromTo.from)
+          && (!fromTo.to || t.date<=fromTo.to))
+        .reduce((s,t)=>s+Number(t.qty), 0);
+      const outQ = activeTransactions()
+        .filter(t => t.productId===p.id && t.size===sz.size && t.type==='out'
+          && (!fromTo.from || t.date>=fromTo.from)
+          && (!fromTo.to || t.date<=fromTo.to))
+        .reduce((s,t)=>s+Number(t.qty), 0);
+      const stk = stockOf(p.id, sz.size);
+      const pct = outQtyTotal > 0 ? (outQ / outQtyTotal * 100) : 0;
+      const color = SIZE_COLORS[i % SIZE_COLORS.length];
+
+      let stkCls = '';
+      if (stk <= 0) stkCls = 'pdt-stock-low';
+      else if (stk <= threshold) stkCls = 'pdt-stock-warn';
+
+      return { size: sz.size, inQ, outQ, stk, pct, color, stkCls };
+    });
+
+    return `
+      <div class="pdt-block">
+        <div class="pdt-head">
+          <span class="pdt-name">${escapeHtml(p.name)}</span>
+          <span class="pdt-totals">
+            Nhập <strong>${fmtNum(inQtyTotal)}</strong> ·
+            Bán <strong>${fmtNum(outQtyTotal)}</strong> ·
+            Tồn <strong>${fmtNum(stockTotal)}</strong>
+          </span>
+        </div>
+        <table class="pdt-table">
+          <thead>
+            <tr>
+              <th>Size</th>
+              <th class="num-col">Nhập</th>
+              <th class="num-col">Bán</th>
+              <th class="num-col">Tồn</th>
+              <th>Tỉ lệ</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sizeRows.map(r => `
+              <tr>
+                <td><span class="pdt-size">${escapeHtml(r.size)}</span></td>
+                <td class="num-col">${fmtNum(r.inQ)}</td>
+                <td class="num-col">${fmtNum(r.outQ)}</td>
+                <td class="num-col ${r.stkCls}">${fmtNum(r.stk)}</td>
+                <td>
+                  <div class="pdt-bar-cell">
+                    <div class="pdt-bar">
+                      <div class="pdt-bar-fill" style="width:${r.pct}%;background:${r.color}"></div>
+                    </div>
+                    <span class="pdt-pct">${r.pct.toFixed(0)}%</span>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }).join('');
+}
+
 function renderSizeBreakdownHTML() {
   const filtered = activeProducts().filter(p =>
     !overviewFilter.productId || p.id === overviewFilter.productId);
@@ -1495,92 +1663,27 @@ function renderOverview(page) {
       <div class="stat" data-tone="profit">
         <div class="stat-label">Tổng nhập</div>
         <div class="stat-value num">${fmtNum(s.totalIn)}</div>
-        <div class="stat-sub">Giá vốn: ${fmtVND(s.productCost)}</div>
       </div>
       <div class="stat" data-tone="revenue">
         <div class="stat-label">Số lượng bán ra</div>
         <div class="stat-value num">${fmtNum(s.totalOut)}</div>
-        <div class="stat-sub">Doanh thu: ${fmtVND(s.revenue)}</div>
       </div>
       <div class="stat" data-tone="stock">
         <div class="stat-label">Tồn kho hiện tại</div>
         <div class="stat-value num">${fmtNum(s.stockRemaining)}</div>
-        <div class="stat-sub">${s.productFilter ? '1 sản phẩm đang lọc' : activeProducts().length + ' sản phẩm'} · không lọc theo ngày</div>
       </div>
       <div class="stat" data-tone="cost">
         <div class="stat-label">Chi phí</div>
-        <div class="stat-value num">${s.productFilter ? '—' : fmtVND(s.totalCost)}</div>
-        <div class="stat-sub">${s.productFilter ? 'Không hiển thị khi lọc theo SP' : `Nhập: ${fmtVND(s.productCost)} · Khác: ${fmtVND(s.otherCost)}`}</div>
+        <div class="stat-value num">${s.productFilter ? '—' : fmtNum(s.totalCost)}</div>
       </div>
     </div>
 
     <div class="section card">
       <div class="card-title">
-        <span>Chi tiết bán ra</span>
-        <span class="text-mute text-xs">Tỉ lệ size bán</span>
+        <span>Chi tiết theo sản phẩm</span>
+        <span class="text-mute text-xs">Nhập · Bán · Tồn · Tỉ lệ</span>
       </div>
-      ${renderSizeBreakdownHTML()}
-    </div>
-
-    <div class="section card">
-      <div class="card-title"><span>Tồn kho theo sản phẩm</span></div>
-      ${activeProducts().length === 0 ? `
-        <div class="empty">
-          <div class="empty-icon">∅</div>
-          <div>Chưa có sản phẩm. Thêm sản phẩm ở tab "Sản phẩm".</div>
-        </div>
-      ` : `
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Sản phẩm</th>
-                <th>Loại</th>
-                <th style="text-align:right">Đã nhập</th>
-                <th style="text-align:right">Đã bán</th>
-                <th style="text-align:right">Tồn kho</th>
-                <th>Chi tiết size</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${activeProducts()
-                .filter(p => !overviewFilter.productId || p.id === overviewFilter.productId)
-                .map(p => {
-                  const total = totalStockOfProduct(p);
-                  const inQty = totalInOfProduct(p.id, {
-                    from: overviewFilter.from || undefined,
-                    to: overviewFilter.to || undefined
-                  });
-                  const outQty = totalOutOfProduct(p.id, {
-                    from: overviewFilter.from || undefined,
-                    to: overviewFilter.to || undefined
-                  });
-                  return `
-                    <tr>
-                      <td data-label="Sản phẩm"><strong>${escapeHtml(p.name)}</strong></td>
-                      <td data-label="Loại"><span class="chip">${escapeHtml(p.category||'—')}</span></td>
-                      <td data-label="Đã nhập" class="num type-in" style="text-align:right">${fmtNum(inQty)}</td>
-                      <td data-label="Đã bán" class="num type-out" style="text-align:right">${fmtNum(outQty)}</td>
-                      <td data-label="Tồn kho" class="num" style="text-align:right;font-weight:600">${fmtNum(total)}</td>
-                      <td data-label="Chi tiết size">
-                        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-                          ${p.sizes.map(sz => {
-                            const stk = stockOf(p.id, sz.size);
-                            const threshold = Number(p.lowStockThreshold)||5;
-                            let badgeCls = 'badge-ok';
-                            if (stk <= 0) badgeCls = 'badge-low';
-                            else if (stk <= threshold) badgeCls = 'badge-warn';
-                            return `<span class="badge ${badgeCls}">${escapeHtml(sz.size)}: ${stk}</span>`;
-                          }).join('')}
-                        </div>
-                      </td>
-                    </tr>
-                  `;
-                }).join('')}
-            </tbody>
-          </table>
-        </div>
-      `}
+      ${renderProductDetailTable()}
     </div>
 
     <div class="section card">
