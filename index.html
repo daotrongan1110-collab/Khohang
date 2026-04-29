@@ -209,19 +209,25 @@
   .card {
     background: var(--bg-elev);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: 14px;
     box-shadow: var(--shadow-sm);
     border: 1px solid var(--line-soft);
   }
+  @media (min-width: 640px) {
+    .card { padding: 18px; }
+  }
   .card-title {
     font-family: var(--font-display);
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 600;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+  }
+  @media (min-width: 640px) {
+    .card-title { font-size: 18px; margin-bottom: 14px; }
   }
 
   /* OVERVIEW STATS GRID */
@@ -259,11 +265,12 @@
     margin-bottom: 6px;
   }
   .stat-value {
-    font-family: var(--font-display);
-    font-size: 24px;
+    font-family: var(--font-body);
+    font-size: 26px;
     font-weight: 700;
     letter-spacing: -0.01em;
     line-height: 1.1;
+    font-variant-numeric: tabular-nums;
   }
   .stat-sub {
     font-size: 12px;
@@ -279,29 +286,39 @@
   .form-grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 12px;
+    gap: 10px;
   }
+  /* cols-2: luôn 2 cột (kể cả mobile) */
+  .form-grid.cols-2 { grid-template-columns: 1fr 1fr; }
   @media (min-width: 640px) {
-    .form-grid.cols-2 { grid-template-columns: 1fr 1fr; }
     .form-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
     .form-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
   }
-  .field { display: flex; flex-direction: column; gap: 6px; }
+  /* cols-3 và cols-4 trên mobile vẫn 2 cột (đỡ phải scroll dài) */
+  @media (max-width: 639px) {
+    .form-grid.cols-3,
+    .form-grid.cols-4 { grid-template-columns: 1fr 1fr; }
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
   .field label {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
     color: var(--ink-soft);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
   }
   .input, .select, .textarea {
     width: 100%;
-    padding: 11px 13px;
+    padding: 9px 11px;
     background: var(--bg-elev);
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
-    font-size: 15px;
+    font-size: 14px;
     transition: border 0.15s, box-shadow 0.15s;
+  }
+  /* Trên desktop có chỗ rộng hơn nên tăng nhẹ */
+  @media (min-width: 640px) {
+    .input, .select, .textarea { padding: 10px 12px; font-size: 15px; }
   }
   .input:focus, .select:focus, .textarea:focus {
     outline: none;
@@ -433,7 +450,10 @@
   .type-cost { color: var(--warn); font-weight: 600; }
 
   /* SECTION */
-  .section { margin-bottom: 24px; }
+  .section { margin-bottom: 16px; }
+  @media (min-width: 640px) {
+    .section { margin-bottom: 24px; }
+  }
   .section-head {
     display: flex;
     align-items: center;
@@ -863,17 +883,17 @@
   /* COST CATEGORY SELECT */
   .cat-select {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 8px;
-    margin-bottom: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(95px, 1fr));
+    gap: 6px;
+    margin-bottom: 10px;
   }
   .cat-pill {
-    padding: 9px 10px;
+    padding: 7px 8px;
     background: var(--bg-elev);
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
     text-align: center;
-    font-size: 13px;
+    font-size: 12px;
     transition: all 0.15s;
   }
   .cat-pill:hover { border-color: var(--ink-mute); }
@@ -1496,8 +1516,8 @@ function renderOverview(page) {
 
     <div class="section card">
       <div class="card-title">
-        <span>Chi tiết bán ra theo size</span>
-        <span class="text-mute text-xs">Tỉ lệ size bán chạy của từng mẫu</span>
+        <span>Chi tiết bán ra</span>
+        <span class="text-mute text-xs">Tỉ lệ size bán</span>
       </div>
       ${renderSizeBreakdownHTML()}
     </div>
@@ -2753,11 +2773,11 @@ function renderCosts(page) {
       <div class="section-head">
         <h3 class="section-title">Tổng chi phí theo danh mục</h3>
       </div>
-      <div class="form-grid cols-3" style="gap:8px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:6px">
         ${totalsByCat.map(c => `
-          <div class="card" style="padding:12px">
-            <div class="text-xs text-mute" style="text-transform:uppercase;letter-spacing:0.06em">${c.label}</div>
-            <div class="num" style="font-family:var(--font-display);font-size:20px;font-weight:700;margin-top:4px">${fmtVND(c.total)}</div>
+          <div class="card" style="padding:8px 10px">
+            <div class="text-xs text-mute" style="text-transform:uppercase;letter-spacing:0.05em;font-size:10px">${c.label}</div>
+            <div class="num" style="font-family:var(--font-body);font-size:14px;font-weight:700;margin-top:2px">${fmtVND(c.total)}</div>
           </div>
         `).join('')}
       </div>
@@ -2767,35 +2787,22 @@ function renderCosts(page) {
       <div class="card-title"><span>Lịch sử chi phí (${activeCosts().length})</span></div>
       ${activeCosts().length === 0 ? `
         <div class="empty"><div class="text-mute text-sm">Chưa có chi phí nào</div></div>
-      ` : `
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Ngày</th>
-                <th>Danh mục</th>
-                <th>Ghi chú</th>
-                <th style="text-align:right">Số tiền</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${activeCosts().slice().sort((a,b)=>b.date.localeCompare(a.date)).map(c => `
-                <tr>
-                  <td data-label="Ngày">${fmtDate(c.date)}</td>
-                  <td data-label="Danh mục"><span class="chip">${escapeHtml(costLabel(c.category))}</span></td>
-                  <td data-label="Ghi chú" class="text-sm">${escapeHtml(c.note||'—')}</td>
-                  <td data-label="Số tiền" class="num type-cost" style="text-align:right">${fmtVND(c.amount)}</td>
-                  <td class="cell-actions" style="display:flex;gap:6px;justify-content:flex-end">
-                    <button class="btn btn-ghost btn-sm" data-edit-cost="${c.id}">Sửa</button>
-                    <button class="btn btn-danger btn-sm" data-rm-cost="${c.id}">Xoá</button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
+      ` : activeCosts().slice().sort((a,b)=>b.date.localeCompare(a.date)).map(c => `
+        <div class="history-entry">
+          <div class="history-marker cost">$</div>
+          <div>
+            <div class="history-info-1">Chi phí · ${escapeHtml(costLabel(c.category))}</div>
+            <div class="history-info-2">${fmtDate(c.date)}${c.note?' · '+escapeHtml(c.note):''}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <div class="history-amount num type-cost">-${fmtVND(c.amount)}</div>
+            <div style="display:flex;gap:4px">
+              <button class="btn btn-ghost btn-sm" data-edit-cost="${c.id}">Sửa</button>
+              <button class="btn btn-ghost btn-sm" data-rm-cost="${c.id}" style="color:var(--danger)">Xoá</button>
+            </div>
+          </div>
         </div>
-      `}
+      `).join('')}
     </div>
   `;
 
