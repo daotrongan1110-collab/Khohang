@@ -723,6 +723,22 @@
     font-weight: 600;
     color: var(--ink);
   }
+  /* Dòng tổng (tfoot) */
+  .pdt-table tfoot td {
+    padding-top: 10px;
+    padding-bottom: 10px;
+    border-top: 2px solid var(--ink);
+    border-bottom: none;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .pdt-table tfoot td.size-col {
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--ink-mute);
+  }
+
   /* Stock cell màu */
   .pdt-stock-low { color: var(--danger); font-weight: 700; }
   .pdt-stock-warn { color: var(--warn); font-weight: 600; }
@@ -734,16 +750,12 @@
   }
   .pdt-meter {
     display: inline-flex;
-    gap: 2px;
+    gap: 1px;
   }
   .pdt-meter-cell {
-    width: 6px;
-    height: 10px;
+    width: 4px;
+    height: 12px;
     border-radius: 1px;
-    background: var(--bg-soft);
-  }
-  .pdt-meter-cell.filled {
-    background: var(--accent-color, var(--ink));
   }
   .pdt-pct {
     font-size: 11px;
@@ -1527,11 +1539,6 @@ function renderProductDetailTable() {
       <div class="pdt-block">
         <div class="pdt-head">
           <span class="pdt-name">${escapeHtml(p.name)}</span>
-          <span class="pdt-totals">
-            Nhập <strong>${fmtNum(inQtyTotal)}</strong> ·
-            Tồn <strong>${fmtNum(stockTotal)}</strong> ·
-            Đã bán <strong>${fmtNum(outQtyTotal)}</strong>
-          </span>
         </div>
         <table class="pdt-table">
           <colgroup>
@@ -1552,23 +1559,17 @@ function renderProductDetailTable() {
           </thead>
           <tbody>
             ${sizeRows.map(r => {
-              // Tính số ô tô đậm theo % (5 mức)
-              const filledCells = r.pct === 0 ? 0 :
-                r.pct <= 20 ? 1 :
-                r.pct <= 40 ? 2 :
-                r.pct <= 60 ? 3 :
-                r.pct <= 80 ? 4 : 5;
-              // Màu chung theo mức bán: thấp = đỏ nhạt, cao = xanh
-              const meterColor =
-                filledCells === 0 ? 'var(--line)' :
-                filledCells === 1 ? '#c84630' :   // đỏ — bán ít
-                filledCells === 2 ? '#d68a3c' :   // cam
-                filledCells === 3 ? '#b8923f' :   // vàng đồng
-                filledCells === 4 ? '#6a8a4a' :   // xanh nhạt
-                                    '#4a6b3e';    // xanh đậm — bán chạy
-              const meter = Array.from({length: 5}, (_, i) =>
-                `<span class="pdt-meter-cell ${i < filledCells ? 'filled' : ''}"></span>`
-              ).join('');
+              // Số ô sáng theo % (10 ô, mỗi ô = 10%)
+              const filledCells = r.pct === 0 ? 0 : Math.min(10, Math.ceil(r.pct / 10));
+              const cellColors = [
+                '#c84630', '#d6593a', '#dd7a3b', '#d68a3c', '#c79a3d',
+                '#b8923f', '#9a8c42', '#7a8a45', '#6a8a4a', '#4a6b3e'
+              ];
+              const meter = Array.from({length: 10}, (_, i) => {
+                const isFilled = i < filledCells;
+                const bg = isFilled ? cellColors[i] : 'var(--bg-soft)';
+                return `<span class="pdt-meter-cell" style="background:${bg}"></span>`;
+              }).join('');
               return `
                 <tr>
                   <td class="size-col"><span class="pdt-size">${escapeHtml(r.size)}</span></td>
@@ -1576,7 +1577,7 @@ function renderProductDetailTable() {
                   <td class="stock-col ${r.stkCls}">${fmtNum(r.stk)}</td>
                   <td>${fmtNum(r.outQ)}</td>
                   <td>
-                    <div class="pdt-bar-cell" style="--accent-color:${meterColor}">
+                    <div class="pdt-bar-cell">
                       <div class="pdt-meter">${meter}</div>
                       <span class="pdt-pct">${r.pct.toFixed(0)}%</span>
                     </div>
@@ -1585,6 +1586,15 @@ function renderProductDetailTable() {
               `;
             }).join('')}
           </tbody>
+          <tfoot>
+            <tr class="pdt-total-row">
+              <td class="size-col">Tổng</td>
+              <td>${fmtNum(inQtyTotal)}</td>
+              <td class="stock-col">${fmtNum(stockTotal)}</td>
+              <td>${fmtNum(outQtyTotal)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     `;
