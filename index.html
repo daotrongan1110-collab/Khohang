@@ -692,7 +692,7 @@
     table-layout: fixed;
   }
   .pdt-table th {
-    text-align: right;
+    text-align: center;
     padding: 6px 4px;
     font-size: 10px;
     text-transform: uppercase;
@@ -706,17 +706,18 @@
   .pdt-table td {
     padding: 8px 4px;
     border-bottom: 1px solid var(--line-soft);
-    text-align: right;
+    text-align: center;
     font-variant-numeric: tabular-nums;
   }
   .pdt-table td.size-col { text-align: left; padding-left: 2px; }
-  /* Cột Tồn: in đậm + background nhạt để nổi bật */
+  /* Cột Tồn: in đậm + to hơn (không cần background) */
   .pdt-table td.stock-col {
     font-weight: 700;
-    background: var(--bg-soft);
+    font-size: 14px;
+    color: var(--ink);
   }
   .pdt-table th.stock-col-head {
-    background: var(--bg-soft);
+    color: var(--ink);
   }
   .pdt-table tr:last-child td { border-bottom: none; }
   .pdt-size {
@@ -1535,6 +1536,9 @@ function renderProductDetailTable() {
       return { size: sz.size, inQ, outQ, stk, pct, color, stkCls };
     });
 
+    // Tìm size bán nhiều nhất để làm chuẩn 100% (cho thang đo tương đối)
+    const maxOutQ = sizeRows.reduce((m, r) => Math.max(m, r.outQ), 0);
+
     return `
       <div class="pdt-block">
         <div class="pdt-head">
@@ -1542,11 +1546,11 @@ function renderProductDetailTable() {
         </div>
         <table class="pdt-table">
           <colgroup>
-            <col style="width:13%">
+            <col style="width:11%">
+            <col style="width:15%">
+            <col style="width:15%">
             <col style="width:17%">
-            <col style="width:17%">
-            <col style="width:18%">
-            <col style="width:35%">
+            <col style="width:42%">
           </colgroup>
           <thead>
             <tr>
@@ -1559,8 +1563,10 @@ function renderProductDetailTable() {
           </thead>
           <tbody>
             ${sizeRows.map(r => {
-              // Số ô sáng theo % (10 ô, mỗi ô = 10%)
-              const filledCells = r.pct === 0 ? 0 : Math.min(10, Math.ceil(r.pct / 10));
+              // Số ô sáng theo TỈ LỆ TƯƠNG ĐỐI so với size bán nhiều nhất
+              // Size bán nhiều nhất → 10 ô (full), các size khác tỉ lệ theo
+              const relativeRatio = maxOutQ > 0 ? r.outQ / maxOutQ : 0;
+              const filledCells = relativeRatio === 0 ? 0 : Math.max(1, Math.round(relativeRatio * 10));
               const cellColors = [
                 '#c84630', '#d6593a', '#dd7a3b', '#d68a3c', '#c79a3d',
                 '#b8923f', '#9a8c42', '#7a8a45', '#6a8a4a', '#4a6b3e'
