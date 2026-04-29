@@ -687,11 +687,12 @@
   .pdt-totals strong { color: var(--ink); font-variant-numeric: tabular-nums; }
   .pdt-table {
     width: 100%;
-    font-size: 12px;
+    font-size: 13px;
     border-collapse: collapse;
+    table-layout: fixed;
   }
   .pdt-table th {
-    text-align: left;
+    text-align: right;
     padding: 6px 4px;
     font-size: 10px;
     text-transform: uppercase;
@@ -700,48 +701,50 @@
     font-weight: 600;
     border-bottom: 1px solid var(--line-soft);
   }
-  .pdt-table th.num-col, .pdt-table td.num-col {
+  .pdt-table th.size-col { text-align: left; padding-left: 2px; }
+  .pdt-table th.meter-col { text-align: right; padding-right: 2px; }
+  .pdt-table td {
+    padding: 8px 4px;
+    border-bottom: 1px solid var(--line-soft);
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
-  .pdt-table td {
-    padding: 7px 4px;
-    border-bottom: 1px solid var(--line-soft);
-  }
+  .pdt-table td.size-col { text-align: left; padding-left: 2px; }
   .pdt-table tr:last-child td { border-bottom: none; }
   .pdt-size {
     font-weight: 600;
     color: var(--ink);
   }
-  .pdt-bar {
-    position: relative;
-    height: 6px;
-    background: var(--bg-soft);
-    border-radius: 3px;
-    overflow: hidden;
-    min-width: 50px;
-  }
-  .pdt-bar-fill {
-    position: absolute;
-    top: 0; left: 0;
-    height: 100%;
-    border-radius: 3px;
-  }
+  /* Stock cell màu */
+  .pdt-stock-low { color: var(--danger); font-weight: 700; }
+  .pdt-stock-warn { color: var(--warn); font-weight: 600; }
   .pdt-bar-cell {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+  .pdt-meter {
+    display: inline-flex;
+    gap: 2px;
+  }
+  .pdt-meter-cell {
+    width: 6px;
+    height: 10px;
+    border-radius: 1px;
+    background: var(--bg-soft);
+  }
+  .pdt-meter-cell.filled {
+    background: var(--accent-color, var(--ink));
   }
   .pdt-pct {
     font-size: 11px;
-    color: var(--ink-soft);
+    color: var(--ink);
     font-variant-numeric: tabular-nums;
-    min-width: 28px;
+    font-weight: 600;
+    min-width: 26px;
     text-align: right;
   }
-  /* Cell stock có màu theo trạng thái */
-  .pdt-stock-low { color: var(--danger); font-weight: 600; }
-  .pdt-stock-warn { color: var(--warn); font-weight: 600; }
 
   /* SIZE BREAKDOWN BAR */
   .size-breakdown {
@@ -1518,37 +1521,53 @@ function renderProductDetailTable() {
           <span class="pdt-name">${escapeHtml(p.name)}</span>
           <span class="pdt-totals">
             Nhập <strong>${fmtNum(inQtyTotal)}</strong> ·
-            Bán <strong>${fmtNum(outQtyTotal)}</strong> ·
-            Tồn <strong>${fmtNum(stockTotal)}</strong>
+            Tồn <strong>${fmtNum(stockTotal)}</strong> ·
+            Đã bán <strong>${fmtNum(outQtyTotal)}</strong>
           </span>
         </div>
         <table class="pdt-table">
+          <colgroup>
+            <col style="width:13%">
+            <col style="width:17%">
+            <col style="width:17%">
+            <col style="width:18%">
+            <col style="width:35%">
+          </colgroup>
           <thead>
             <tr>
-              <th>Size</th>
-              <th class="num-col">Nhập</th>
-              <th class="num-col">Bán</th>
-              <th class="num-col">Tồn</th>
-              <th>Tỉ lệ</th>
+              <th class="size-col">Size</th>
+              <th>Nhập</th>
+              <th>Tồn</th>
+              <th>Đã bán</th>
+              <th class="meter-col">Tỉ lệ</th>
             </tr>
           </thead>
           <tbody>
-            ${sizeRows.map(r => `
-              <tr>
-                <td><span class="pdt-size">${escapeHtml(r.size)}</span></td>
-                <td class="num-col">${fmtNum(r.inQ)}</td>
-                <td class="num-col">${fmtNum(r.outQ)}</td>
-                <td class="num-col ${r.stkCls}">${fmtNum(r.stk)}</td>
-                <td>
-                  <div class="pdt-bar-cell">
-                    <div class="pdt-bar">
-                      <div class="pdt-bar-fill" style="width:${r.pct}%;background:${r.color}"></div>
+            ${sizeRows.map(r => {
+              // Tính số ô tô đậm theo % (5 mức)
+              const filledCells = r.pct === 0 ? 0 :
+                r.pct <= 20 ? 1 :
+                r.pct <= 40 ? 2 :
+                r.pct <= 60 ? 3 :
+                r.pct <= 80 ? 4 : 5;
+              const meter = Array.from({length: 5}, (_, i) =>
+                `<span class="pdt-meter-cell ${i < filledCells ? 'filled' : ''}"></span>`
+              ).join('');
+              return `
+                <tr>
+                  <td class="size-col"><span class="pdt-size">${escapeHtml(r.size)}</span></td>
+                  <td>${fmtNum(r.inQ)}</td>
+                  <td class="${r.stkCls}">${fmtNum(r.stk)}</td>
+                  <td>${fmtNum(r.outQ)}</td>
+                  <td>
+                    <div class="pdt-bar-cell" style="--accent-color:${r.color}">
+                      <div class="pdt-meter">${meter}</div>
+                      <span class="pdt-pct">${r.pct.toFixed(0)}%</span>
                     </div>
-                    <span class="pdt-pct">${r.pct.toFixed(0)}%</span>
-                  </div>
-                </td>
-              </tr>
-            `).join('')}
+                  </td>
+                </tr>
+              `;
+            }).join('')}
           </tbody>
         </table>
       </div>
