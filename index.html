@@ -3177,6 +3177,9 @@ let paymentHistoryPage = 1;
 const PAYMENT_PER_PAGE = 10;
 // Filter danh mục cho "Lịch sử chi phí" (null = tất cả)
 let costHistoryFilterCategory = null;
+// Pagination cho lịch sử chi phí
+let costHistoryPage = 1;
+const COST_PER_PAGE = 15;
 
 // Render lịch sử thanh toán (có pagination 10/trang)
 function renderPaymentHistory() {
@@ -3227,8 +3230,8 @@ function renderPaymentPaginationBar(current, total) {
   return `<div class="pg-bar">${prevBtn}${buttons}${nextBtn}</div>`;
 }
 
-// Render lịch sử chi phí (tách ra để gọn). Vẫn hiện tất cả vì chi phí có thể ít,
-// nếu nhiều có thể thêm pagination tương tự.
+// Render lịch sử chi phí — có pagination 15/trang.
+// Khi filter theo category đổi, page tự reset về 1 (xử lý ở chỗ set filter).
 function renderCostHistory() {
   let list = activeCosts();
   if (costHistoryFilterCategory) {
@@ -3240,7 +3243,15 @@ function renderCostHistory() {
       : 'Chưa có chi phí nào';
     return `<div class="empty"><div class="text-mute text-sm">${msg}</div></div>`;
   }
-  return list.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(c => `
+  list = list.slice().sort((a,b)=>b.date.localeCompare(a.date));
+
+  const totalPages = Math.max(1, Math.ceil(list.length / COST_PER_PAGE));
+  if (costHistoryPage > totalPages) costHistoryPage = totalPages;
+  if (costHistoryPage < 1) costHistoryPage = 1;
+  const start = (costHistoryPage - 1) * COST_PER_PAGE;
+  const pageList = list.slice(start, start + COST_PER_PAGE);
+
+  const itemsHTML = pageList.map(c => `
     <div class="history-entry">
       <div class="history-marker cost">$</div>
       <div>
@@ -3256,6 +3267,28 @@ function renderCostHistory() {
       </div>
     </div>
   `).join('');
+
+  const pagination = totalPages > 1 ? renderCostHistoryPaginationBar(costHistoryPage, totalPages) : '';
+  return itemsHTML + pagination;
+}
+
+function renderCostHistoryPaginationBar(current, total) {
+  const set = new Set([1, total, current, current-1, current+1]);
+  const valid = [...set].filter(p => p >= 1 && p <= total).sort((a,b)=>a-b);
+  let prev = 0;
+  const parts = [];
+  for (const p of valid) {
+    if (p - prev > 1) parts.push('...');
+    parts.push(p);
+    prev = p;
+  }
+  const buttons = parts.map(p => {
+    if (p === '...') return `<span class="pg-ellipsis">…</span>`;
+    return `<button class="pg-btn ${p===current?'active':''}" data-cost-pg="${p}">${p}</button>`;
+  }).join('');
+  const prevBtn = current > 1 ? `<button class="pg-btn" data-cost-pg="${current-1}">‹</button>` : `<button class="pg-btn" disabled>‹</button>`;
+  const nextBtn = current < total ? `<button class="pg-btn" data-cost-pg="${current+1}">›</button>` : `<button class="pg-btn" disabled>›</button>`;
+  return `<div class="pg-bar">${prevBtn}${buttons}${nextBtn}</div>`;
 }
 
 function renderCosts(page) {
@@ -3347,6 +3380,28 @@ function renderCosts(page) {
       `}
     </div>
 
+    <div class="card section" style="border:1px solid var(--green-soft);background:linear-gradient(180deg, var(--green-soft) 0%, var(--bg-elev) 50%)">
+      <div class="card-title">
+        <span>💵 Ghi nhận thanh toán</span>
+        <span class="text-xs text-mute">Còn lại: <strong class="num">${fmtVND(unpaidAll)}</strong></span>
+      </div>
+      <div class="form-grid cols-2">
+        <div class="field">
+          <label>Số tiền</label>
+          <input type="number" min="0" class="input" id="pm_amount" value="${paymentForm.amount||''}" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Ngày</label>
+          <input type="date" class="input" id="pm_date" value="${paymentForm.date}">
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" id="pm_save">＋ Lưu thanh toán</button>
+        ${unpaidAll > 0 ? `<button class="btn btn-ghost btn-sm" id="pm_fill_all">Điền nốt số còn lại (${fmtVND(unpaidAll)})</button>` : ''}
+      </div>
+    </div>
+
     <div class="section">
       <div class="section-head">
         <h3 class="section-title">Tổng chi phí theo danh mục</h3>
@@ -3362,42 +3417,6 @@ function renderCosts(page) {
       </div>
     </div>
 
-    <div class="card section" style="border:1px solid var(--green-soft);background:linear-gradient(180deg, var(--green-soft) 0%, var(--bg-elev) 50%)">
-      <div class="card-title">
-        <span>💵 Ghi nhận thanh toán</span>
-        <span class="text-xs text-mute">Còn lại: <strong class="num">${fmtVND(unpaidAll)}</strong></span>
-      </div>
-      <p class="text-xs text-mute" style="margin-bottom:10px">
-        Mỗi lần thanh toán một khoản tiền (nhân công, nguyên liệu, vận chuyển...), ghi nhận ở đây để theo dõi còn nợ bao nhiêu.
-      </p>
-      <div class="form-grid cols-2">
-        <div class="field">
-          <label>Số tiền</label>
-          <input type="number" min="0" class="input" id="pm_amount" value="${paymentForm.amount||''}" placeholder="0">
-        </div>
-        <div class="field">
-          <label>Ngày</label>
-          <input type="date" class="input" id="pm_date" value="${paymentForm.date}">
-        </div>
-        <div class="field" style="grid-column:1/-1">
-          <label>Ghi chú (vd: trả lương T5, trả NCC vải...)</label>
-          <input class="input" id="pm_note" value="${escapeHtml(paymentForm.note)}" placeholder="VD: Trả NCC vải tháng 5">
-        </div>
-      </div>
-      <div class="divider"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-primary" id="pm_save">＋ Lưu thanh toán</button>
-        ${unpaidAll > 0 ? `<button class="btn btn-ghost btn-sm" id="pm_fill_all">Điền nốt số còn lại (${fmtVND(unpaidAll)})</button>` : ''}
-      </div>
-    </div>
-
-    <div class="card section">
-      <div class="card-title">
-        <span>Lịch sử thanh toán (${activePayments().length})</span>
-      </div>
-      ${renderPaymentHistory()}
-    </div>
-
     <div class="card section">
       <div class="card-title">
         <span>Lịch sử chi phí ${costHistoryFilterCategory
@@ -3406,6 +3425,13 @@ function renderCosts(page) {
         ${costHistoryFilterCategory ? `<button class="btn btn-ghost btn-sm" id="cat_filter_clear_2" style="color:var(--accent)">× Bỏ lọc</button>` : ''}
       </div>
       ${renderCostHistory()}
+    </div>
+
+    <div class="card section">
+      <div class="card-title">
+        <span>Lịch sử thanh toán (${activePayments().length})</span>
+      </div>
+      ${renderPaymentHistory()}
     </div>
   `;
 
@@ -3426,6 +3452,7 @@ function renderCosts(page) {
       } else {
         costHistoryFilterCategory = cat; // click cat khác → đổi (tự động bỏ cat cũ)
       }
+      costHistoryPage = 1; // reset về trang đầu khi đổi filter
       renderPage();
     });
   });
@@ -3435,6 +3462,7 @@ function renderCosts(page) {
   if (clearFilterBtn1) {
     clearFilterBtn1.addEventListener('click', () => {
       costHistoryFilterCategory = null;
+      costHistoryPage = 1;
       renderPage();
     });
   }
@@ -3442,9 +3470,20 @@ function renderCosts(page) {
   if (clearFilterBtn2) {
     clearFilterBtn2.addEventListener('click', () => {
       costHistoryFilterCategory = null;
+      costHistoryPage = 1;
       renderPage();
     });
   }
+
+  // Pagination lịch sử chi phí
+  page.querySelectorAll('[data-cost-pg]').forEach(b => {
+    b.addEventListener('click', () => {
+      const num = +b.dataset.costPg;
+      if (!num) return;
+      costHistoryPage = num;
+      renderPage();
+    });
+  });
   page.querySelector('#c_amount').addEventListener('input', e => costForm.amount = +e.target.value);
   page.querySelector('#c_date').addEventListener('input', e => costForm.date = e.target.value);
   page.querySelector('#c_note').addEventListener('input', e => costForm.note = e.target.value);
@@ -3519,7 +3558,6 @@ function renderCosts(page) {
   // ============ THANH TOÁN ============
   page.querySelector('#pm_amount').addEventListener('input', e => paymentForm.amount = +e.target.value || 0);
   page.querySelector('#pm_date').addEventListener('input', e => paymentForm.date = e.target.value);
-  page.querySelector('#pm_note').addEventListener('input', e => paymentForm.note = e.target.value);
 
   // Nút "Điền nốt số còn lại" — tự điền số tiền chưa thanh toán vào ô amount
   const fillBtn = page.querySelector('#pm_fill_all');
