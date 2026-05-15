@@ -240,6 +240,21 @@
   @media (min-width: 640px) {
     .stats-grid { grid-template-columns: repeat(4, 1fr); gap: 14px; }
   }
+  /* Variant 3 ô — luôn cố định 3 cột (cho trang Chi phí), nhưng mobile rất hẹp thì xuống 1 cột */
+  .stats-grid.stats-3 { grid-template-columns: repeat(3, 1fr); }
+  @media (min-width: 640px) {
+    .stats-grid.stats-3 { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (min-width: 960px) {
+    .stats-grid.stats-3 { grid-template-columns: repeat(3, 1fr); }
+  }
+  /* Mobile: stats-3 chứa số tiền lớn (fmtVND), giảm font cho khỏi tràn */
+  @media (max-width: 639px) {
+    .stats-grid.stats-3 .stat { padding: 10px 10px; }
+    .stats-grid.stats-3 .stat-value { font-size: 15px; }
+    .stats-grid.stats-3 .stat-label { font-size: 10px; }
+    .stats-grid.stats-3 .stat-sub { font-size: 10px; }
+  }
   .stat {
     background: var(--bg-elev);
     border-radius: var(--radius);
@@ -1072,6 +1087,78 @@
     margin-top: 4px;
   }
 
+  /* Card thống kê theo danh mục chi phí — clickable để lọc lịch sử bên dưới */
+  .cat-stat-card {
+    padding: 8px 10px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    color: inherit;
+    transition: all 0.15s;
+    display: block;
+    width: 100%;
+    box-shadow: var(--shadow-sm);
+  }
+  .cat-stat-card:hover {
+    border-color: var(--ink-mute);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+  .cat-stat-card.active {
+    background: var(--ink);
+    border-color: var(--ink);
+  }
+  .cat-stat-card.active .text-mute,
+  .cat-stat-card.active .num {
+    color: var(--bg-elev) !important;
+  }
+
+  /* PAGINATION BAR (cho lịch sử nhập/bán) */
+  .pg-bar {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 12px 0 4px;
+    border-top: 1px solid var(--line-soft);
+    margin-top: 8px;
+  }
+  .pg-btn {
+    min-width: 34px;
+    height: 34px;
+    padding: 0 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--bg-elev);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s;
+  }
+  .pg-btn:hover:not(:disabled):not(.active) {
+    background: var(--bg-soft);
+  }
+  .pg-btn.active {
+    background: var(--ink);
+    color: var(--bg-elev);
+    border-color: var(--ink);
+  }
+  .pg-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .pg-ellipsis {
+    color: var(--ink-mute);
+    font-size: 13px;
+    padding: 0 4px;
+  }
+
   /* RESPONSIVE TWEAKS */
   @media (min-width: 768px) {
     main { padding: 28px 24px; }
@@ -1109,6 +1196,7 @@ const defaultState = () => ({
   products: [],
   transactions: [],
   costs: [],
+  payments: [], // Các khoản thanh toán cho chi phí (mỗi khoản: id, amount, date, note, deleted?)
   meta: { createdAt: Date.now(), version: 1 }
 });
 
@@ -1203,6 +1291,8 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 function activeProducts() { return state.products.filter(p => !p.deleted); }
 function activeTransactions() { return state.transactions.filter(t => !t.deleted); }
 function activeCosts() { return state.costs.filter(c => !c.deleted); }
+// Tương thích ngược: state cũ có thể không có `payments`
+function activePayments() { return (state.payments || []).filter(p => !p.deleted); }
 
 // Đánh dấu xoá thay vì xoá thật
 function softDeleteProduct(id) {
@@ -1227,6 +1317,11 @@ function softDeleteTransaction(id) {
 function softDeleteCost(id) {
   const c = state.costs.find(x => x.id === id);
   if (c) { c.deleted = true; c.deletedAt = Date.now(); }
+}
+function softDeletePayment(id) {
+  if (!state.payments) return;
+  const p = state.payments.find(x => x.id === id);
+  if (p) { p.deleted = true; p.deletedAt = Date.now(); }
 }
 
 // Phục hồi
@@ -1257,6 +1352,11 @@ function restoreCost(id) {
   const c = state.costs.find(x => x.id === id);
   if (c) { delete c.deleted; delete c.deletedAt; }
 }
+function restorePayment(id) {
+  if (!state.payments) return;
+  const pm = state.payments.find(x => x.id === id);
+  if (pm) { delete pm.deleted; delete pm.deletedAt; }
+}
 
 // Xoá vĩnh viễn (từ thùng rác)
 function purgeProduct(id) {
@@ -1265,6 +1365,10 @@ function purgeProduct(id) {
 }
 function purgeTransaction(id) { state.transactions = state.transactions.filter(t => t.id !== id); }
 function purgeCost(id) { state.costs = state.costs.filter(c => c.id !== id); }
+function purgePayment(id) {
+  if (!state.payments) return;
+  state.payments = state.payments.filter(pm => pm.id !== id);
+}
 
 /* ============================================================
    UTILS
@@ -1363,11 +1467,18 @@ function summary({ from, to, productFilter } = {}) {
       revenue += Number(t.qty) * Number(t.unitPrice || 0);
     }
   }
+  // Tổng đã thanh toán cho chi phí (chỉ tính khi không filter theo SP, vì payment không gắn SP)
+  let totalPaid = 0;
   if (!productFilter) {
     for (const c of activeCosts()) {
       if (from && c.date < from) continue;
       if (to && c.date > to) continue;
       otherCost += Number(c.amount);
+    }
+    for (const pm of activePayments()) {
+      if (from && pm.date < from) continue;
+      if (to && pm.date > to) continue;
+      totalPaid += Number(pm.amount) || 0;
     }
   }
 
@@ -1379,12 +1490,18 @@ function summary({ from, to, productFilter } = {}) {
     stockRemaining = activeProducts().reduce((s,p)=> s + totalStockOfProduct(p), 0);
   }
 
+  const totalCost = productCost + otherCost;
   return {
     totalIn, totalOut,
     stockRemaining,
     revenue,
-    totalCost: productCost + otherCost,
+    totalCost,
     productCost, otherCost,
+    totalPaid,
+    unpaid: Math.max(0, totalCost - totalPaid), // không cho âm
+    // Số còn nợ thực tế (= tổng chi phí gốc - đã thanh toán). Cho phép âm để biết
+    // đã trả dư (vd: xoá chi phí sau khi đã thanh toán). UI hiển thị với Math.max ở chỗ cần.
+    costRemaining: totalCost - totalPaid,
     profit: revenue - productCost - otherCost,
     productFilter // pass through để biết có đang lọc product không
   };
@@ -1724,7 +1841,7 @@ function renderOverview(page) {
         <div class="stat-value num">${fmtNum(s.stockRemaining)}</div>
       </div>
       <div class="stat" data-tone="cost">
-        <div class="stat-label">Chi phí</div>
+        <div class="stat-label">Tổng chi phí</div>
         <div class="stat-value num">${s.productFilter ? '—' : fmtNum(s.totalCost)}</div>
       </div>
     </div>
@@ -2170,6 +2287,9 @@ let stockInPreselect = null;
 let stockInDraft = [];
 let stockInSharedDate = todayInputDate();
 let stockInSharedNote = '';
+// Giữ lại sản phẩm/size đang chọn để sau khi thêm dòng không bị reset
+let stockInLastProduct = null;
+let stockInLastSize = null;
 
 function renderStockIn(page) {
   if (activeProducts().length === 0) {
@@ -2233,7 +2353,7 @@ function renderStockIn(page) {
       ${stockInDraft.length > 0 ? `
         <div class="divider"></div>
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-          <div class="text-sm">
+          <div class="text-sm" data-draft-sum="in">
             Tổng: <strong class="num">${stockInDraft.reduce((s,r)=>s+r.qty,0)}</strong> sản phẩm ·
             Tổng tiền: <strong class="num">${fmtVND(stockInDraft.reduce((s,r)=>s+r.qty*r.unitPrice,0))}</strong>
           </div>
@@ -2243,7 +2363,7 @@ function renderStockIn(page) {
     </div>
 
     <div class="section card">
-      <div class="card-title"><span>5 lần nhập gần nhất</span></div>
+      <div class="card-title"><span>Lịch sử nhập kho</span></div>
       ${recentTransactionsHTML('in')}
     </div>
   `;
@@ -2256,10 +2376,19 @@ function renderStockIn(page) {
   productSel.innerHTML = activeProducts().map(p =>
     `<option value="${p.id}" ${p.id===initial?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
 
-  function refillSizes() {
+  // Khôi phục sản phẩm đang chọn trước đó (nếu có và còn tồn tại)
+  // Lưu ý: ưu tiên `initial` từ stockInPreselect (vd: bấm "+Nhập" từ overview).
+  if (!stockInPreselect && stockInLastProduct && activeProducts().some(p => p.id === stockInLastProduct)) {
+    productSel.value = stockInLastProduct;
+  }
+
+  function refillSizes(preserveSize) {
     const p = getProduct(productSel.value);
     sizeSel.innerHTML = p.sizes.map(s =>
       `<option value="${escapeHtml(s.size)}">${escapeHtml(s.size)}</option>`).join('');
+    if (preserveSize && p.sizes.some(s => s.size === preserveSize)) {
+      sizeSel.value = preserveSize;
+    }
     refillPrice();
   }
   function refillPrice() {
@@ -2268,9 +2397,16 @@ function renderStockIn(page) {
     priceEl.value = sz ? sz.costPrice : 0;
   }
 
-  productSel.addEventListener('change', refillSizes);
-  sizeSel.addEventListener('change', refillPrice);
-  refillSizes();
+  productSel.addEventListener('change', () => {
+    stockInLastProduct = productSel.value;
+    stockInLastSize = null;
+    refillSizes();
+  });
+  sizeSel.addEventListener('change', () => {
+    stockInLastSize = sizeSel.value;
+    refillPrice();
+  });
+  refillSizes(stockInLastSize);
 
   // Lưu shared date/note vào biến global khi user gõ
   page.querySelector('#in_date').addEventListener('input', e => stockInSharedDate = e.target.value);
@@ -2280,6 +2416,8 @@ function renderStockIn(page) {
   page.querySelector('#in_add_row').addEventListener('click', () => {
     const qty = +qtyEl.value;
     if (!qty || qty <= 0) return showToast('Số lượng phải > 0', true);
+    stockInLastProduct = productSel.value;
+    stockInLastSize = sizeSel.value;
     stockInDraft.push({
       tempId: uid(),
       productId: productSel.value,
@@ -2297,6 +2435,7 @@ function renderStockIn(page) {
     const p = getProduct(productSel.value);
     const qty = +qtyEl.value;
     if (!qty || qty <= 0) return showToast('Số lượng phải > 0', true);
+    stockInLastProduct = productSel.value;
     p.sizes.forEach(sz => {
       stockInDraft.push({
         tempId: uid(),
@@ -2333,12 +2472,14 @@ function renderStockIn(page) {
     el.addEventListener('input', e => {
       const row = stockInDraft.find(r => r.tempId === e.target.dataset.draftQty);
       if (row) row.qty = +e.target.value || 0;
+      updateDraftTotalsDOM(stockInDraft, 'in', page);
     });
   });
   page.querySelectorAll('[data-draft-price]').forEach(el => {
     el.addEventListener('input', e => {
       const row = stockInDraft.find(r => r.tempId === e.target.dataset.draftPrice);
       if (row) row.unitPrice = +e.target.value || 0;
+      updateDraftTotalsDOM(stockInDraft, 'in', page);
     });
   });
 
@@ -2387,10 +2528,10 @@ function renderStockDraftList(draft, type) {
           <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:10px 12px;background:var(--bg-soft);border-radius:var(--radius-sm);border-left:3px solid var(${type==='in'?'--green':'--accent'})">
             <div style="min-width:0">
               <div style="font-weight:500;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p?p.name:'?')} <span class="text-mute">· ${escapeHtml(r.size)}</span></div>
-              <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+              <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
                 <input type="number" min="1" class="input" data-draft-qty="${r.tempId}" value="${r.qty}" style="width:80px;padding:5px 8px;font-size:13px" title="Số lượng">
                 <input type="number" min="0" class="input num" data-draft-price="${r.tempId}" value="${r.unitPrice}" style="width:120px;padding:5px 8px;font-size:13px" title="Giá">
-                <span class="text-xs text-mute" style="align-self:center">= ${fmtVND(total)}</span>
+                <span class="text-xs text-mute" data-row-total="${r.tempId}">= ${fmtVND(total)}</span>
               </div>
             </div>
             <button class="btn btn-ghost btn-sm" data-rm-draft="${r.tempId}" style="color:var(--danger);font-size:18px">×</button>
@@ -2401,12 +2542,32 @@ function renderStockDraftList(draft, type) {
   `;
 }
 
+// Cập nhật DOM tổng draft (không re-render toàn trang) — dùng cho cả nhập và bán
+function updateDraftTotalsDOM(draft, type, page) {
+  // Update từng dòng
+  draft.forEach(r => {
+    const el = page.querySelector(`[data-row-total="${r.tempId}"]`);
+    if (el) el.textContent = '= ' + fmtVND(r.qty * r.unitPrice);
+  });
+  // Update tổng dưới cùng
+  const totalQty = draft.reduce((s,r)=>s+(+r.qty||0), 0);
+  const totalMoney = draft.reduce((s,r)=>s+(+r.qty||0)*(+r.unitPrice||0), 0);
+  const sumEl = page.querySelector(`[data-draft-sum="${type}"]`);
+  if (sumEl) {
+    const label = type === 'in' ? 'Tổng tiền' : 'Doanh thu';
+    sumEl.innerHTML = `Tổng: <strong class="num">${totalQty}</strong> sản phẩm · ${label}: <strong class="num">${fmtVND(totalMoney)}</strong>`;
+  }
+}
+
 /* ============================================================
    PAGE: STOCK OUT (BÁN RA) — đa dòng (giống đơn hàng)
    ============================================================ */
 let stockOutDraft = [];
 let stockOutSharedDate = todayInputDate();
 let stockOutSharedNote = '';
+// Giữ lại sản phẩm/size đang chọn để sau khi thêm dòng không bị reset
+let stockOutLastProduct = null;
+let stockOutLastSize = null;
 
 function renderStockOut(page) {
   if (activeProducts().length === 0) {
@@ -2466,7 +2627,7 @@ function renderStockOut(page) {
       ${stockOutDraft.length > 0 ? `
         <div class="divider"></div>
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-          <div class="text-sm">
+          <div class="text-sm" data-draft-sum="out">
             Tổng: <strong class="num">${stockOutDraft.reduce((s,r)=>s+r.qty,0)}</strong> sản phẩm ·
             Doanh thu: <strong class="num">${fmtVND(stockOutDraft.reduce((s,r)=>s+r.qty*r.unitPrice,0))}</strong>
           </div>
@@ -2476,7 +2637,7 @@ function renderStockOut(page) {
     </div>
 
     <div class="section card">
-      <div class="card-title"><span>5 đơn bán gần nhất</span></div>
+      <div class="card-title"><span>Lịch sử bán ra</span></div>
       ${recentTransactionsHTML('out')}
     </div>
   `;
@@ -2490,12 +2651,21 @@ function renderStockOut(page) {
   productSel.innerHTML = activeProducts().map(p =>
     `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
 
-  function refillSizes() {
+  // Khôi phục sản phẩm đang chọn trước đó (nếu còn tồn tại)
+  if (stockOutLastProduct && activeProducts().some(p => p.id === stockOutLastProduct)) {
+    productSel.value = stockOutLastProduct;
+  }
+
+  function refillSizes(preserveSize) {
     const p = getProduct(productSel.value);
     sizeSel.innerHTML = p.sizes.map(s => {
       const stk = stockOf(p.id, s.size);
       return `<option value="${escapeHtml(s.size)}">${escapeHtml(s.size)} · tồn ${stk}</option>`;
     }).join('');
+    // Khôi phục size đang chọn nếu sản phẩm này có size đó
+    if (preserveSize && p.sizes.some(s => s.size === preserveSize)) {
+      sizeSel.value = preserveSize;
+    }
     refillPrice();
   }
   function refillPrice() {
@@ -2514,10 +2684,17 @@ function renderStockOut(page) {
     }
   }
 
-  productSel.addEventListener('change', refillSizes);
-  sizeSel.addEventListener('change', refillPrice);
+  productSel.addEventListener('change', () => {
+    stockOutLastProduct = productSel.value;
+    stockOutLastSize = null; // đổi sản phẩm thì reset size
+    refillSizes();
+  });
+  sizeSel.addEventListener('change', () => {
+    stockOutLastSize = sizeSel.value;
+    refillPrice();
+  });
   qtyEl.addEventListener('input', updateHint);
-  refillSizes();
+  refillSizes(stockOutLastSize);
 
   page.querySelector('#out_date').addEventListener('input', e => stockOutSharedDate = e.target.value);
   page.querySelector('#out_note').addEventListener('input', e => stockOutSharedNote = e.target.value);
@@ -2535,6 +2712,10 @@ function renderStockOut(page) {
     if (alreadyInDraft + qty > stk) {
       if (!confirm(`Tổng số bán cho size này (${alreadyInDraft + qty}) vượt tồn kho (${stk}). Tiếp tục?`)) return;
     }
+
+    // Ghi nhớ sản phẩm/size đang chọn để sau khi re-render giữ nguyên
+    stockOutLastProduct = productSel.value;
+    stockOutLastSize = sizeSel.value;
 
     stockOutDraft.push({
       tempId: uid(),
@@ -2571,12 +2752,14 @@ function renderStockOut(page) {
     el.addEventListener('input', e => {
       const row = stockOutDraft.find(r => r.tempId === e.target.dataset.draftQty);
       if (row) row.qty = +e.target.value || 0;
+      updateDraftTotalsDOM(stockOutDraft, 'out', page);
     });
   });
   page.querySelectorAll('[data-draft-price]').forEach(el => {
     el.addEventListener('input', e => {
       const row = stockOutDraft.find(r => r.tempId === e.target.dataset.draftPrice);
       if (row) row.unitPrice = +e.target.value || 0;
+      updateDraftTotalsDOM(stockOutDraft, 'out', page);
     });
   });
 
@@ -2631,10 +2814,24 @@ function renderStockOut(page) {
   bindRecentTxActions(page);
 }
 
+// Lưu page hiện tại cho phần "Lịch sử gần đây" ở trang Nhập / Bán
+let recentTxPage = { in: 1, out: 1 };
+const RECENT_TX_PER_PAGE = 10;
+
 function recentTransactionsHTML(type) {
-  const list = activeTransactions().filter(t => t.type === type).slice(0, 5);
-  if (list.length === 0) return `<div class="text-mute text-sm" style="padding:12px 0">Chưa có giao dịch</div>`;
-  return `<div id="recent_list">${list.map(t => {
+  const all = activeTransactions().filter(t => t.type === type);
+  if (all.length === 0) return `<div class="text-mute text-sm" style="padding:12px 0">Chưa có giao dịch</div>`;
+
+  const totalPages = Math.max(1, Math.ceil(all.length / RECENT_TX_PER_PAGE));
+  // Đảm bảo page hiện tại nằm trong khoảng hợp lệ (vd: sau khi xoá nhiều dòng)
+  if (recentTxPage[type] > totalPages) recentTxPage[type] = totalPages;
+  if (recentTxPage[type] < 1) recentTxPage[type] = 1;
+  const currentPage = recentTxPage[type];
+
+  const start = (currentPage - 1) * RECENT_TX_PER_PAGE;
+  const list = all.slice(start, start + RECENT_TX_PER_PAGE);
+
+  const itemsHTML = list.map(t => {
     const p = getProduct(t.productId);
     return `
       <div class="history-entry">
@@ -2654,7 +2851,35 @@ function recentTransactionsHTML(type) {
         </div>
       </div>
     `;
-  }).join('')}</div>`;
+  }).join('');
+
+  // Phân trang: 1 2 3 ... (rút gọn nếu nhiều)
+  const paginationHTML = totalPages > 1 ? renderPaginationBar(currentPage, totalPages, type) : '';
+
+  return `<div id="recent_list">${itemsHTML}</div>${paginationHTML}`;
+}
+
+// Thanh phân trang dạng: « 1 2 … 5 6 7 … 10 » (rút gọn để không bị dài trên mobile)
+function renderPaginationBar(current, total, type) {
+  const pages = [];
+  const push = (p) => pages.push(p);
+  // Logic: luôn hiện trang 1, current-1, current, current+1, total, dấu ...
+  const set = new Set([1, total, current, current-1, current+1]);
+  // Bỏ các giá trị ngoài khoảng
+  const valid = [...set].filter(p => p >= 1 && p <= total).sort((a,b)=>a-b);
+  let prev = 0;
+  for (const p of valid) {
+    if (p - prev > 1) push('...');
+    push(p);
+    prev = p;
+  }
+  const buttons = pages.map(p => {
+    if (p === '...') return `<span class="pg-ellipsis">…</span>`;
+    return `<button class="pg-btn ${p===current?'active':''}" data-recent-pg="${type}" data-recent-pg-num="${p}">${p}</button>`;
+  }).join('');
+  const prevBtn = current > 1 ? `<button class="pg-btn" data-recent-pg="${type}" data-recent-pg-num="${current-1}">‹</button>` : `<button class="pg-btn" disabled>‹</button>`;
+  const nextBtn = current < total ? `<button class="pg-btn" data-recent-pg="${type}" data-recent-pg-num="${current+1}">›</button>` : `<button class="pg-btn" disabled>›</button>`;
+  return `<div class="pg-bar">${prevBtn}${buttons}${nextBtn}</div>`;
 }
 
 // Bind edit/delete buttons trên các trang có recent list
@@ -2669,6 +2894,19 @@ function bindRecentTxActions(page) {
       saveState();
       showToast('Đã chuyển vào thùng rác');
       render();
+    });
+  });
+  // Phân trang
+  page.querySelectorAll('[data-recent-pg]').forEach(b => {
+    b.addEventListener('click', () => {
+      const type = b.dataset.recentPg;
+      const num = +b.dataset.recentPgNum;
+      if (!num) return;
+      recentTxPage[type] = num;
+      renderPage();
+      // Scroll lên đầu khu vực lịch sử cho dễ thấy
+      const target = page.querySelector('#recent_list');
+      if (target) target.scrollIntoView({ behavior:'smooth', block:'start' });
     });
   });
 }
@@ -2857,16 +3095,127 @@ function openEditCostModal(costId) {
    ============================================================ */
 let costForm = { category: 'production', amount: 0, date: todayInputDate(), note: '' };
 let costDraft = [];
+// Form thanh toán
+let paymentForm = { amount: 0, date: todayInputDate(), note: '' };
+// Pagination cho lịch sử thanh toán
+let paymentHistoryPage = 1;
+const PAYMENT_PER_PAGE = 10;
+// Filter danh mục cho "Lịch sử chi phí" (null = tất cả)
+let costHistoryFilterCategory = null;
+
+// Render lịch sử thanh toán (có pagination 10/trang)
+function renderPaymentHistory() {
+  const all = activePayments().slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  if (all.length === 0) {
+    return `<div class="empty" style="padding:16px 0"><div class="text-mute text-sm">Chưa có thanh toán nào</div></div>`;
+  }
+  const totalPages = Math.max(1, Math.ceil(all.length / PAYMENT_PER_PAGE));
+  if (paymentHistoryPage > totalPages) paymentHistoryPage = totalPages;
+  if (paymentHistoryPage < 1) paymentHistoryPage = 1;
+  const start = (paymentHistoryPage - 1) * PAYMENT_PER_PAGE;
+  const list = all.slice(start, start + PAYMENT_PER_PAGE);
+  const itemsHTML = list.map(pm => `
+    <div class="history-entry">
+      <div class="history-marker" style="background:var(--green-soft);color:var(--green)">✓</div>
+      <div>
+        <div class="history-info-1">Thanh toán${pm.note?' · '+escapeHtml(pm.note):''}</div>
+        <div class="history-info-2">${fmtDate(pm.date)}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        <div class="history-amount num" style="color:var(--green)">+${fmtVND(pm.amount)}</div>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm" data-rm-payment="${pm.id}" style="color:var(--danger)">Xoá</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+  const pagination = totalPages > 1 ? renderPaymentPaginationBar(paymentHistoryPage, totalPages) : '';
+  return itemsHTML + pagination;
+}
+
+function renderPaymentPaginationBar(current, total) {
+  const set = new Set([1, total, current, current-1, current+1]);
+  const valid = [...set].filter(p => p >= 1 && p <= total).sort((a,b)=>a-b);
+  let prev = 0;
+  const parts = [];
+  for (const p of valid) {
+    if (p - prev > 1) parts.push('...');
+    parts.push(p);
+    prev = p;
+  }
+  const buttons = parts.map(p => {
+    if (p === '...') return `<span class="pg-ellipsis">…</span>`;
+    return `<button class="pg-btn ${p===current?'active':''}" data-pm-pg="${p}">${p}</button>`;
+  }).join('');
+  const prevBtn = current > 1 ? `<button class="pg-btn" data-pm-pg="${current-1}">‹</button>` : `<button class="pg-btn" disabled>‹</button>`;
+  const nextBtn = current < total ? `<button class="pg-btn" data-pm-pg="${current+1}">›</button>` : `<button class="pg-btn" disabled>›</button>`;
+  return `<div class="pg-bar">${prevBtn}${buttons}${nextBtn}</div>`;
+}
+
+// Render lịch sử chi phí (tách ra để gọn). Vẫn hiện tất cả vì chi phí có thể ít,
+// nếu nhiều có thể thêm pagination tương tự.
+function renderCostHistory() {
+  let list = activeCosts();
+  if (costHistoryFilterCategory) {
+    list = list.filter(c => c.category === costHistoryFilterCategory);
+  }
+  if (list.length === 0) {
+    const msg = costHistoryFilterCategory
+      ? `Chưa có chi phí nào trong danh mục "${costLabel(costHistoryFilterCategory)}"`
+      : 'Chưa có chi phí nào';
+    return `<div class="empty"><div class="text-mute text-sm">${msg}</div></div>`;
+  }
+  return list.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(c => `
+    <div class="history-entry">
+      <div class="history-marker cost">$</div>
+      <div>
+        <div class="history-info-1">Chi phí · ${escapeHtml(costLabel(c.category))}</div>
+        <div class="history-info-2">${fmtDate(c.date)}${c.note?' · '+escapeHtml(c.note):''}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        <div class="history-amount num type-cost">-${fmtVND(c.amount)}</div>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm" data-edit-cost="${c.id}">Sửa</button>
+          <button class="btn btn-ghost btn-sm" data-rm-cost="${c.id}" style="color:var(--danger)">Xoá</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
 
 function renderCosts(page) {
   const totalsByCat = COST_CATEGORIES.map(c => ({
     ...c,
     total: activeCosts().filter(x => x.category === c.key).reduce((s,x)=>s+Number(x.amount),0)
   }));
+  // Tổng kết tài chính
+  const totalCostAll = activeCosts().reduce((s,c)=>s+Number(c.amount||0), 0);
+  const totalPaidAll = activePayments().reduce((s,p)=>s+Number(p.amount||0), 0);
+  const unpaidAll = Math.max(0, totalCostAll - totalPaidAll);
+  // Cảnh báo: nếu thanh toán > chi phí (có thể do xoá chi phí sau khi đã ghi thanh toán)
+  const overpaid = totalPaidAll > totalCostAll;
 
   page.innerHTML = `
     <h2 class="page-title">Chi phí</h2>
     <p class="page-subtitle"><span class="accent-line"></span>Có thể thêm nhiều chi phí cùng lúc</p>
+
+    <div class="stats-grid stats-3">
+      <div class="stat" data-tone="cost">
+        <div class="stat-label">Tổng chi phí</div>
+        <div class="stat-value num">${fmtVND(totalCostAll)}</div>
+        <div class="stat-sub">${activeCosts().length} khoản</div>
+      </div>
+      <div class="stat" data-tone="profit">
+        <div class="stat-label">Đã thanh toán</div>
+        <div class="stat-value num">${fmtVND(totalPaidAll)}</div>
+        <div class="stat-sub">${activePayments().length} lần</div>
+      </div>
+      <div class="stat" data-tone="${unpaidAll>0?'cost':'revenue'}">
+        <div class="stat-label">${overpaid ? 'Thanh toán dư' : 'Chưa thanh toán'}</div>
+        <div class="stat-value num">${fmtVND(overpaid ? (totalPaidAll - totalCostAll) : unpaidAll)}</div>
+        ${overpaid ? '<div class="stat-sub" style="color:var(--warn)">⚠ Đã trả nhiều hơn tổng chi phí</div>' : ''}
+      </div>
+    </div>
 
     <div class="card section">
       <div class="card-title"><span>Thêm dòng chi phí</span></div>
@@ -2926,37 +3275,62 @@ function renderCosts(page) {
     <div class="section">
       <div class="section-head">
         <h3 class="section-title">Tổng chi phí theo danh mục</h3>
+        ${costHistoryFilterCategory ? `<span class="text-xs text-mute">Đang lọc: <strong>${escapeHtml(costLabel(costHistoryFilterCategory))}</strong> · <button class="btn btn-ghost btn-sm" id="cat_filter_clear" style="padding:0 6px;text-decoration:underline">Bỏ lọc</button></span>` : '<span class="text-xs text-mute">Bấm vào danh mục để lọc lịch sử bên dưới</span>'}
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:6px">
         ${totalsByCat.map(c => `
-          <div class="card" style="padding:8px 10px">
+          <button class="cat-stat-card ${costHistoryFilterCategory===c.key?'active':''}" data-cat-filter="${c.key}" type="button">
             <div class="text-xs text-mute" style="text-transform:uppercase;letter-spacing:0.05em;font-size:10px">${c.label}</div>
             <div class="num" style="font-family:var(--font-body);font-size:14px;font-weight:700;margin-top:2px">${fmtVND(c.total)}</div>
-          </div>
+          </button>
         `).join('')}
       </div>
     </div>
 
-    <div class="section card">
-      <div class="card-title"><span>Lịch sử chi phí (${activeCosts().length})</span></div>
-      ${activeCosts().length === 0 ? `
-        <div class="empty"><div class="text-mute text-sm">Chưa có chi phí nào</div></div>
-      ` : activeCosts().slice().sort((a,b)=>b.date.localeCompare(a.date)).map(c => `
-        <div class="history-entry">
-          <div class="history-marker cost">$</div>
-          <div>
-            <div class="history-info-1">Chi phí · ${escapeHtml(costLabel(c.category))}</div>
-            <div class="history-info-2">${fmtDate(c.date)}${c.note?' · '+escapeHtml(c.note):''}</div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-            <div class="history-amount num type-cost">-${fmtVND(c.amount)}</div>
-            <div style="display:flex;gap:4px">
-              <button class="btn btn-ghost btn-sm" data-edit-cost="${c.id}">Sửa</button>
-              <button class="btn btn-ghost btn-sm" data-rm-cost="${c.id}" style="color:var(--danger)">Xoá</button>
-            </div>
-          </div>
+    <div class="card section" style="border:1px solid var(--green-soft);background:linear-gradient(180deg, var(--green-soft) 0%, var(--bg-elev) 50%)">
+      <div class="card-title">
+        <span>💵 Ghi nhận thanh toán</span>
+        <span class="text-xs text-mute">Còn lại: <strong class="num">${fmtVND(unpaidAll)}</strong></span>
+      </div>
+      <p class="text-xs text-mute" style="margin-bottom:10px">
+        Mỗi lần thanh toán một khoản tiền (nhân công, nguyên liệu, vận chuyển...), ghi nhận ở đây để theo dõi còn nợ bao nhiêu.
+      </p>
+      <div class="form-grid cols-2">
+        <div class="field">
+          <label>Số tiền</label>
+          <input type="number" min="0" class="input" id="pm_amount" value="${paymentForm.amount||''}" placeholder="0">
         </div>
-      `).join('')}
+        <div class="field">
+          <label>Ngày</label>
+          <input type="date" class="input" id="pm_date" value="${paymentForm.date}">
+        </div>
+        <div class="field" style="grid-column:1/-1">
+          <label>Ghi chú (vd: trả lương T5, trả NCC vải...)</label>
+          <input class="input" id="pm_note" value="${escapeHtml(paymentForm.note)}" placeholder="VD: Trả NCC vải tháng 5">
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" id="pm_save">＋ Lưu thanh toán</button>
+        ${unpaidAll > 0 ? `<button class="btn btn-ghost btn-sm" id="pm_fill_all">Điền nốt số còn lại (${fmtVND(unpaidAll)})</button>` : ''}
+      </div>
+    </div>
+
+    <div class="card section">
+      <div class="card-title">
+        <span>Lịch sử thanh toán (${activePayments().length})</span>
+      </div>
+      ${renderPaymentHistory()}
+    </div>
+
+    <div class="card section">
+      <div class="card-title">
+        <span>Lịch sử chi phí ${costHistoryFilterCategory
+          ? `<span class="chip" style="margin-left:6px">Lọc: ${escapeHtml(costLabel(costHistoryFilterCategory))}</span>`
+          : `(${activeCosts().length})`}</span>
+        ${costHistoryFilterCategory ? `<button class="btn btn-ghost btn-sm" id="cat_filter_clear_2" style="color:var(--accent)">× Bỏ lọc</button>` : ''}
+      </div>
+      ${renderCostHistory()}
     </div>
   `;
 
@@ -2966,6 +3340,36 @@ function renderCosts(page) {
       page.querySelectorAll('[data-cat]').forEach(x => x.classList.toggle('active', x === b));
     });
   });
+
+  // Lọc lịch sử chi phí theo danh mục (click card)
+  // Toggle: click cùng cat → bỏ chọn. Click cat khác → đổi sang cat đó.
+  page.querySelectorAll('[data-cat-filter]').forEach(b => {
+    b.addEventListener('click', () => {
+      const cat = b.dataset.catFilter;
+      if (costHistoryFilterCategory === cat) {
+        costHistoryFilterCategory = null; // click lần 2 → bỏ chọn
+      } else {
+        costHistoryFilterCategory = cat; // click cat khác → đổi (tự động bỏ cat cũ)
+      }
+      renderPage();
+    });
+  });
+
+  // Nút "Bỏ lọc" trong section-head và card-title
+  const clearFilterBtn1 = page.querySelector('#cat_filter_clear');
+  if (clearFilterBtn1) {
+    clearFilterBtn1.addEventListener('click', () => {
+      costHistoryFilterCategory = null;
+      renderPage();
+    });
+  }
+  const clearFilterBtn2 = page.querySelector('#cat_filter_clear_2');
+  if (clearFilterBtn2) {
+    clearFilterBtn2.addEventListener('click', () => {
+      costHistoryFilterCategory = null;
+      renderPage();
+    });
+  }
   page.querySelector('#c_amount').addEventListener('input', e => costForm.amount = +e.target.value);
   page.querySelector('#c_date').addEventListener('input', e => costForm.date = e.target.value);
   page.querySelector('#c_note').addEventListener('input', e => costForm.note = e.target.value);
@@ -3036,6 +3440,69 @@ function renderCosts(page) {
   page.querySelectorAll('[data-edit-cost]').forEach(b => {
     b.addEventListener('click', () => openEditCostModal(b.dataset.editCost));
   });
+
+  // ============ THANH TOÁN ============
+  page.querySelector('#pm_amount').addEventListener('input', e => paymentForm.amount = +e.target.value || 0);
+  page.querySelector('#pm_date').addEventListener('input', e => paymentForm.date = e.target.value);
+  page.querySelector('#pm_note').addEventListener('input', e => paymentForm.note = e.target.value);
+
+  // Nút "Điền nốt số còn lại" — tự điền số tiền chưa thanh toán vào ô amount
+  const fillBtn = page.querySelector('#pm_fill_all');
+  if (fillBtn) {
+    fillBtn.addEventListener('click', () => {
+      paymentForm.amount = unpaidAll;
+      page.querySelector('#pm_amount').value = unpaidAll;
+    });
+  }
+
+  // Lưu 1 lần thanh toán
+  page.querySelector('#pm_save').addEventListener('click', () => {
+    if (!paymentForm.amount || paymentForm.amount <= 0) {
+      return showToast('Nhập số tiền thanh toán > 0', true);
+    }
+    if (!state.payments) state.payments = [];
+    // Cảnh báo nếu thanh toán vượt số còn lại (cho phép nhưng hỏi xác nhận)
+    if (paymentForm.amount > unpaidAll && unpaidAll >= 0) {
+      const ok = confirm(
+        `Số tiền (${fmtVND(paymentForm.amount)}) lớn hơn số còn lại (${fmtVND(unpaidAll)}).\n\n` +
+        `Vẫn lưu? (Sẽ bị tính "thanh toán dư")`
+      );
+      if (!ok) return;
+    }
+    state.payments.unshift({
+      id: uid(),
+      amount: paymentForm.amount,
+      date: paymentForm.date,
+      note: paymentForm.note || ''
+    });
+    saveState();
+    // Reset form (giữ lại ngày để nhập tiếp dễ)
+    paymentForm = { amount: 0, date: paymentForm.date, note: '' };
+    paymentHistoryPage = 1; // về trang đầu để thấy bản ghi mới
+    showToast('Đã lưu thanh toán');
+    render();
+  });
+
+  // Xoá 1 thanh toán
+  page.querySelectorAll('[data-rm-payment]').forEach(b => {
+    b.addEventListener('click', () => {
+      if (!confirm('Chuyển thanh toán này vào thùng rác?\n\n💡 Có thể phục hồi từ tab Lịch sử (loại "Đã xoá").')) return;
+      softDeletePayment(b.dataset.rmPayment);
+      saveState();
+      showToast('Đã chuyển vào thùng rác');
+      render();
+    });
+  });
+
+  // Pagination cho lịch sử thanh toán
+  page.querySelectorAll('[data-pm-pg]').forEach(b => {
+    b.addEventListener('click', () => {
+      const num = +b.dataset.pmPg;
+      if (!num) return;
+      paymentHistoryPage = num;
+      renderPage();
+    });
+  });
 }
 
 /* ============================================================
@@ -3078,6 +3545,20 @@ function renderHistory(page) {
       items.push({ ...c, kind: 'cost' });
     }
   }
+  // Thanh toán
+  if (historyFilter.type === 'all' || historyFilter.type === 'payment' || historyFilter.type === 'deleted') {
+    for (const pm of (state.payments || [])) {
+      if (showDeleted) {
+        if (!pm.deleted) continue;
+      } else {
+        if (pm.deleted) continue;
+      }
+      if (historyFilter.productId) continue; // thanh toán không gắn SP
+      if (historyFilter.from && pm.date < historyFilter.from) continue;
+      if (historyFilter.to && pm.date > historyFilter.to) continue;
+      items.push({ ...pm, kind: 'payment' });
+    }
+  }
   // Sản phẩm đã xoá (chỉ hiện trong "Đã xoá")
   if (showDeleted) {
     for (const p of state.products) {
@@ -3095,7 +3576,8 @@ function renderHistory(page) {
   // Đếm thùng rác (cho hiển thị badge)
   const trashCount = state.products.filter(p=>p.deleted).length
     + state.transactions.filter(t=>t.deleted).length
-    + state.costs.filter(c=>c.deleted).length;
+    + state.costs.filter(c=>c.deleted).length
+    + (state.payments || []).filter(pm=>pm.deleted).length;
 
   page.innerHTML = `
     <h2 class="page-title">Lịch sử</h2>
@@ -3110,6 +3592,7 @@ function renderHistory(page) {
             <option value="in" ${historyFilter.type==='in'?'selected':''}>Nhập kho</option>
             <option value="out" ${historyFilter.type==='out'?'selected':''}>Bán ra</option>
             <option value="cost" ${historyFilter.type==='cost'?'selected':''}>Chi phí</option>
+            <option value="payment" ${historyFilter.type==='payment'?'selected':''}>Thanh toán</option>
             <option value="deleted" ${historyFilter.type==='deleted'?'selected':''}>🗑️ Đã xoá ${trashCount>0?'('+trashCount+')':''}</option>
           </select>
         </div>
@@ -3166,6 +3649,14 @@ function renderHistory(page) {
       saveState(); render();
     });
   });
+  // Thanh toán: soft delete (từ trang lịch sử)
+  page.querySelectorAll('[data-rm-payment-h]').forEach(b => {
+    b.addEventListener('click', () => {
+      if (!confirm('Chuyển thanh toán này vào thùng rác?')) return;
+      softDeletePayment(b.dataset.rmPaymentH);
+      saveState(); render();
+    });
+  });
   // Phục hồi
   page.querySelectorAll('[data-restore-tx]').forEach(b => {
     b.addEventListener('click', () => {
@@ -3180,6 +3671,14 @@ function renderHistory(page) {
       restoreCost(b.dataset.restoreCost);
       saveState();
       showToast('Đã phục hồi chi phí');
+      render();
+    });
+  });
+  page.querySelectorAll('[data-restore-payment]').forEach(b => {
+    b.addEventListener('click', () => {
+      restorePayment(b.dataset.restorePayment);
+      saveState();
+      showToast('Đã phục hồi thanh toán');
       render();
     });
   });
@@ -3205,6 +3704,15 @@ function renderHistory(page) {
     b.addEventListener('click', () => {
       if (!confirm('Xoá VĨNH VIỄN chi phí này? Không thể phục hồi sau đó.')) return;
       purgeCost(b.dataset.purgeCost);
+      saveState();
+      showToast('Đã xoá vĩnh viễn');
+      render();
+    });
+  });
+  page.querySelectorAll('[data-purge-payment]').forEach(b => {
+    b.addEventListener('click', () => {
+      if (!confirm('Xoá VĨNH VIỄN thanh toán này? Không thể phục hồi sau đó.')) return;
+      purgePayment(b.dataset.purgePayment);
       saveState();
       showToast('Đã xoá vĩnh viễn');
       render();
@@ -3281,6 +3789,28 @@ function historyEntryHTML(it, deletedMode) {
         </div>
       </div>
     `;
+  } else if (it.kind === 'payment') {
+    const actionsHTML = deletedMode ? `
+      <button class="btn btn-secondary btn-sm" data-restore-payment="${it.id}">↩ Phục hồi</button>
+      <button class="btn btn-ghost btn-sm" data-purge-payment="${it.id}" style="color:var(--danger)">Xoá vĩnh viễn</button>
+    ` : `
+      <button class="btn btn-ghost btn-sm" data-rm-payment-h="${it.id}" style="color:var(--danger)">Xoá</button>
+    `;
+    return `
+      <div class="history-entry" ${deletedMode?'style="opacity:0.7"':''}>
+        <div class="history-marker" style="background:var(--green-soft);color:var(--green)">✓</div>
+        <div>
+          <div class="history-info-1">Thanh toán${it.note?' · '+escapeHtml(it.note):''}</div>
+          <div class="history-info-2">${fmtDate(it.date)}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+          <div class="history-amount num" style="color:var(--green)">+${fmtVND(it.amount)}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
+            ${actionsHTML}
+          </div>
+        </div>
+      </div>
+    `;
   } else if (it.kind === 'product') {
     const sizes = it.sizes.map(s=>s.size).join(', ');
     return `
@@ -3341,7 +3871,7 @@ function renderData(page) {
 
     <div class="card section">
       <div class="card-title"><span>Tóm tắt dữ liệu</span></div>
-      <div class="form-grid cols-3" style="gap:8px">
+      <div class="form-grid cols-4" style="gap:8px">
         <div class="stat" data-tone="stock">
           <div class="stat-label">Sản phẩm</div>
           <div class="stat-value num">${activeProducts().length}</div>
@@ -3356,6 +3886,11 @@ function renderData(page) {
           <div class="stat-label">Chi phí</div>
           <div class="stat-value num">${activeCosts().length}</div>
           ${state.costs.length > activeCosts().length ? `<div class="stat-sub">+ ${state.costs.length - activeCosts().length} đã xoá</div>` : ''}
+        </div>
+        <div class="stat" data-tone="profit">
+          <div class="stat-label">Thanh toán</div>
+          <div class="stat-value num">${activePayments().length}</div>
+          ${(state.payments||[]).length > activePayments().length ? `<div class="stat-sub">+ ${(state.payments||[]).length - activePayments().length} đã xoá</div>` : ''}
         </div>
       </div>
     </div>
